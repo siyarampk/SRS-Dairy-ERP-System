@@ -1,0 +1,13 @@
+target/
+out/
+*.class
+*.iml
+.idea/
+.vscode/
+.DS_Store
+logs/
+*.log
+data/
+backup/
+export/
+!lib/*.jar
