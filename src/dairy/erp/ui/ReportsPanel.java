@@ -10,28 +10,37 @@ import dairy.erp.model.ReportSummary;
 import dairy.erp.service.CustomerService;
 import dairy.erp.service.ReportService;
 import dairy.erp.service.SettingsService;
+import dairy.erp.util.AppBus;
+import dairy.erp.util.ButtonIcons;
 import dairy.erp.util.CSVUtil;
 import dairy.erp.util.CurrencyUtil;
 import dairy.erp.util.DateUtil;
 import dairy.erp.util.PrintUtil;
 import dairy.erp.util.UIUtil;
-import dairy.erp.util.ValidationUtil;
 
 import javax.swing.BorderFactory;
+import javax.swing.DefaultListCellRenderer;
 import javax.swing.JButton;
 import javax.swing.JComboBox;
 import javax.swing.JFileChooser;
 import javax.swing.JFrame;
 import javax.swing.JLabel;
+import javax.swing.JList;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JTable;
 import javax.swing.JTextArea;
-import javax.swing.JTextField;
+import javax.swing.ListSelectionModel;
+import javax.swing.SwingConstants;
+import javax.swing.table.DefaultTableCellRenderer;
 import javax.swing.table.DefaultTableModel;
 import java.awt.BorderLayout;
+import java.awt.Color;
+import java.awt.Component;
+import java.awt.Dimension;
 import java.awt.FlowLayout;
+import java.awt.Font;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.Insets;
@@ -45,8 +54,9 @@ import java.util.List;
 
 /**
  * Reports centre: Daily, Weekly, Monthly, Customer report, Customer statement
- * and Payment report with date/customer/milk-type/shift filters, a weighted
- * summary, printing and CSV export.
+ * and Payment report with a clean filter panel (report type, date range,
+ * customer dropdown, milk type and shift), a summary and a transaction grid
+ * styled exactly like the Customer Details grid.
  */
 public class ReportsPanel extends JPanel {
 
@@ -60,7 +70,7 @@ public class ReportsPanel extends JPanel {
     });
     private final DatePicker fromPicker = new DatePicker();
     private final DatePicker toPicker = new DatePicker();
-    private final JTextField customerField = new JTextField(10);
+    private final JComboBox<Customer> customerCombo = new JComboBox<>();
     private final JComboBox<String> milkBox = new JComboBox<>(new String[]{"All", "Cow", "Buffalo", "Mix"});
     private final JComboBox<String> shiftBox = new JComboBox<>(new String[]{"All", "Morning", "Evening"});
 
@@ -74,68 +84,282 @@ public class ReportsPanel extends JPanel {
     private final JTable table = new JTable(tableModel);
     private String generatedTitle = "";
 
-    public ReportsPanel() {
+    private Customer selectedCustomer;
+
+    public ReportsPanel(String username) {
         super(new BorderLayout(4, 4));
-        setBorder(BorderFactory.createEmptyBorder(6, 6, 6, 6));
+        setBorder(BorderFactory.createEmptyBorder(6, 10, 8, 10));
         fromPicker.setDate(LocalDate.now().withDayOfMonth(1));
         toPicker.setDate(LocalDate.now());
-        add(buildFilters(), BorderLayout.NORTH);
+        // Narrow the date fields so only the date itself is visible.
+        fromPicker.getTextField().setColumns(8);
+        toPicker.getTextField().setColumns(8);
+
+        loadCustomers();
+        // Live propagation: reload the customer combo whenever a customer is
+        // added/updated/deleted on the Customer screen, keeping the selection.
+        AppBus.onCustomersChanged(v -> reloadCustomers());
+        add(buildFilters(username), BorderLayout.NORTH);
         add(buildBody(), BorderLayout.CENTER);
     }
 
-    private JPanel buildFilters() {
-        JPanel p = new JPanel(new GridBagLayout());
-        p.setBorder(BorderFactory.createTitledBorder("Report Filters"));
-        GridBagConstraints g = new GridBagConstraints();
-        g.insets = new Insets(4, 6, 4, 6);
-        g.anchor = GridBagConstraints.WEST;
-
-        g.gridx = 0; g.gridy = 0; p.add(new JLabel("Report:"), g);
-        g.gridx = 1; p.add(reportTypeBox, g);
-        g.gridx = 2; p.add(new JLabel("From:"), g);
-        g.gridx = 3; p.add(fromPicker, g);
-        g.gridx = 4; p.add(new JLabel("To:"), g);
-        g.gridx = 5; p.add(toPicker, g);
-        g.gridx = 6; p.add(new JLabel("Customer:"), g);
-        g.gridx = 7; p.add(customerField, g);
-        g.gridx = 8; p.add(new JLabel("Milk:"), g);
-        g.gridx = 9; p.add(milkBox, g);
-        g.gridx = 10; p.add(new JLabel("Shift:"), g);
-        g.gridx = 11; p.add(shiftBox, g);
-
-        JButton generate = new JButton("Generate");
-        UIUtil.styleButton(generate);
-        generate.addActionListener(e -> generate());
-        g.gridx = 12; p.add(generate, g);
-        JButton print = new JButton("Print");
-        UIUtil.styleButton(print);
-        print.addActionListener(e -> printReport());
-        g.gridx = 13; p.add(print, g);
-        JButton export = new JButton("Export CSV");
-        UIUtil.styleButton(export);
-        export.addActionListener(e -> exportCsv());
-        g.gridx = 14; p.add(export, g);
-        JPanel wrap = new JPanel(new BorderLayout(0, 4));
-        wrap.add(UIUtil.header("Reports"), BorderLayout.NORTH);
-        wrap.add(p, BorderLayout.CENTER);
-        return wrap;
+    /** Fills the customer dropdown with an "All Customers" entry + every customer. */
+    private void loadCustomers() {
+        customerCombo.addItem(null); // "All Customers"
+        List<Customer> customers;
+        try {
+            customers = customerService.listAll();
+        } catch (RuntimeException e) {
+            customers = new ArrayList<>();
+        }
+        for (Customer c : customers) {
+            customerCombo.addItem(c);
+        }
+        customerCombo.setRenderer(new DefaultListCellRenderer() {
+            @Override
+            public Component getListCellRendererComponent(JList<?> list, Object value,
+                    int index, boolean isSelected, boolean cellHasFocus) {
+                super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus);
+                if (value == null) {
+                    setText("All Customers");
+                } else {
+                    Customer c = (Customer) value;
+                    setText(c.getCustomerCode() + " - " + c.getCustomerName());
+                }
+                return this;
+            }
+        });
+        customerCombo.addActionListener(e -> selectedCustomer = (Customer) customerCombo.getSelectedItem());
     }
 
+    /** Reloads the customer dropdown after add/update/delete, preserving selection. */
+    private void reloadCustomers() {
+        Customer sel = (Customer) customerCombo.getSelectedItem();
+        int selId = sel == null ? -1 : sel.getId();
+        customerCombo.removeAllItems();
+        customerCombo.addItem(null); // "All Customers"
+        List<Customer> customers;
+        try {
+            customers = customerService.listAll();
+        } catch (RuntimeException e) {
+            customers = new ArrayList<>();
+        }
+        int restore = -1;
+        for (Customer c : customers) {
+            customerCombo.addItem(c);
+            if (c.getId() == selId) {
+                restore = customerCombo.getItemCount() - 1;
+            }
+        }
+        if (restore >= 0) {
+            customerCombo.setSelectedIndex(restore);
+        } else {
+            customerCombo.setSelectedIndex(0); // back to "All Customers"
+        }
+    }
+
+/** Header row (logo + user/date) and a two-row filter panel. */
+    private JPanel buildFilters(String username) {
+        JPanel top = new JPanel(new BorderLayout(0, 6));
+
+        // Row 1: logo on the left, [ User ] [ Date ] on the right.
+        JPanel headerRow = new JPanel(new BorderLayout());
+        headerRow.add(UIUtil.header("Reports"), BorderLayout.WEST);
+        JPanel info = new JPanel(new FlowLayout(FlowLayout.RIGHT, 14, 6));
+        JLabel userLbl = new JLabel("User: " + username);
+        JLabel dateLbl = new JLabel("Date: " + DateUtil.toDisplay(DateUtil.today()));
+        userLbl.setFont(userLbl.getFont().deriveFont(Font.BOLD, 15f));
+        dateLbl.setFont(dateLbl.getFont().deriveFont(Font.BOLD, 15f));
+        userLbl.setForeground(UIUtil.BRAND);
+        dateLbl.setForeground(UIUtil.BRAND);
+        info.add(userLbl);
+        info.add(dateLbl);
+        headerRow.add(info, BorderLayout.EAST);
+        top.add(headerRow, BorderLayout.NORTH);
+
+        // Section label above the cream filter card (like the reference image).
+        JLabel section = new JLabel("Report Filters");
+        section.setFont(section.getFont().deriveFont(Font.BOLD, 15f));
+        JPanel filterWrap = new JPanel(new BorderLayout(0, 2));
+        filterWrap.setOpaque(false);
+        filterWrap.add(section, BorderLayout.NORTH);
+
+        // Cream -> generic white card, same as the Customer Details cards.
+        JPanel card = new JPanel(new BorderLayout(12, 0));
+        card.setBackground(UIUtil.cardBackground());
+        card.setBorder(UIUtil.cardBorder());
+
+        JPanel fields = new JPanel(new GridBagLayout());
+        fields.setOpaque(false);
+        GridBagConstraints g = new GridBagConstraints();
+        g.insets = new Insets(4, 8, 4, 8);
+        g.anchor = GridBagConstraints.WEST;
+        g.fill = GridBagConstraints.NONE;
+
+        g.gridy = 0;
+        g.gridx = 0;
+        g.gridwidth = 6;
+        JLabel title = new JLabel("FILTER & GENERATE");
+        title.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 18));
+        title.setForeground(UIUtil.BRAND);
+        fields.add(title, g);
+
+        g.gridwidth = 1;
+        g.gridy = 1;
+        g.gridx = 0;
+        fields.add(new JLabel("Report:"), g);
+        g.gridx = 1;
+        reportTypeBox.setPreferredSize(new Dimension(190, 32));
+        fields.add(reportTypeBox, g);
+        g.gridx = 2;
+        fields.add(new JLabel("From:"), g);
+        g.gridx = 3;
+        fields.add(fromPicker, g);
+        g.gridx = 4;
+        fields.add(new JLabel("To:"), g);
+        g.gridx = 5;
+        fields.add(toPicker, g);
+
+        g.gridy = 2;
+        g.gridx = 0;
+        fields.add(new JLabel("Customer:"), g);
+        g.gridx = 1;
+        customerCombo.setPreferredSize(new Dimension(190, 32));
+        fields.add(customerCombo, g);
+        g.gridx = 2;
+        fields.add(new JLabel("Milk:"), g);
+        g.gridx = 3;
+        milkBox.setPreferredSize(new Dimension(110, 32));
+        fields.add(milkBox, g);
+        g.gridx = 4;
+        fields.add(new JLabel("Shift:"), g);
+        g.gridx = 5;
+        shiftBox.setPreferredSize(new Dimension(110, 32));
+        fields.add(shiftBox, g);
+        card.add(fields, BorderLayout.CENTER);
+
+        // Action buttons: same icon-left style as the other screens, pinned to
+        // the top-right corner of the filter card with breathing room above
+        // so they stay fully visible next to the two filter rows.
+        JPanel actionsWrap = new JPanel(new BorderLayout());
+        actionsWrap.setOpaque(false);
+        actionsWrap.setBorder(BorderFactory.createEmptyBorder(12, 10, 0, 4)); // top padding
+        JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 0));
+        actions.setOpaque(false);
+        JButton generate = new JButton("Generate Report", ButtonIcons.of("Document", Color.WHITE));
+        UIUtil.styleSmallButton(generate, new Color(0x2E, 0x7D, 0x32)); // green
+        generate.addActionListener(e -> generate());
+        actions.add(generate);
+        JButton print = new JButton("Print Report", ButtonIcons.of("Printer", Color.WHITE));
+        UIUtil.styleSmallButton(print, new Color(0x60, 0x7D, 0x8B)); // slate
+        print.addActionListener(e -> printReport());
+        actions.add(print);
+        JButton export = new JButton("Export to CSV", ButtonIcons.of("Download", Color.WHITE));
+        UIUtil.styleSmallButton(export, new Color(0x19, 0x76, 0xD2)); // blue
+        export.addActionListener(e -> exportCsv());
+        actions.add(export);
+        actionsWrap.add(actions, BorderLayout.NORTH);
+        card.add(actionsWrap, BorderLayout.EAST);
+
+        filterWrap.add(card, BorderLayout.CENTER);
+        top.add(filterWrap, BorderLayout.CENTER);
+        return top;
+    }
     private JPanel buildBody() {
         JPanel body = new JPanel(new BorderLayout(8, 8));
-        table.setFillsViewportHeight(true);
+        // Same grid look as the Customer Details table: fonts, colours,
+        // row height, zebra striping.
+        UIUtil.styleCustomerDetailsTable(table);
+        table.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        table.setRowHeight(32);
         table.setAutoResizeMode(JTable.AUTO_RESIZE_ALL_COLUMNS);
+        // Right-align numeric columns for a report-style grid.
+        table.setDefaultRenderer(Object.class, new DefaultTableCellRenderer() {
+            @Override
+            public Component getTableCellRendererComponent(JTable source, Object value,
+                    boolean isSelected, boolean hasFocus, int row, int column) {
+                Component c = super.getTableCellRendererComponent(
+                        source, value, isSelected, hasFocus, row, column);
+                JLabel l = (JLabel) c;
+                l.setBorder(BorderFactory.createEmptyBorder(0, 6, 0, 6));
+                String header = tableModel.getColumnName(column);
+                boolean numeric = isNumericColumn(header);
+                l.setHorizontalAlignment(numeric ? SwingConstants.RIGHT
+                        : (column == 0 || column == 2 ? SwingConstants.LEFT : SwingConstants.CENTER));
+                if (isSelected) {
+                    l.setBackground(hasFocus ? UIUtil.tableFocusedRowColor() : UIUtil.tableSelectedRowColor());
+                    l.setForeground(UIUtil.tableSelectedTextColor());
+                } else {
+                    l.setBackground(row % 2 == 0 ? Color.WHITE : UIUtil.tableOddRowColor());
+                    l.setForeground(source.getForeground());
+                }
+                l.setBorder(hasFocus
+                        ? BorderFactory.createLineBorder(UIUtil.BRAND, 2, true)
+                        : BorderFactory.createEmptyBorder(0, 6, 0, 6));
+                return c;
+            }
+        });
+
+        // REPORT VIEW section: bold heading + rounded panel around the grid.
+        JPanel viewSection = new JPanel(new BorderLayout(0, 4));
+        viewSection.setOpaque(false);
+        JLabel viewTitle = new JLabel("REPORT VIEW");
+        viewTitle.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 18));
+        viewTitle.setForeground(UIUtil.BRAND);
+        viewSection.add(viewTitle, BorderLayout.NORTH);
+        JPanel tableWrap = new JPanel(new BorderLayout());
+        tableWrap.setBackground(Color.WHITE);
+        tableWrap.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(new Color(0xC9, 0xD3, 0xDA), 1, true),
+                BorderFactory.createEmptyBorder(6, 6, 6, 6)));
+        tableWrap.add(new JScrollPane(table), BorderLayout.CENTER);
+        viewSection.add(tableWrap, BorderLayout.CENTER);
+
+        // SUMMARY section: bold heading + rounded grey card with the totals.
+        JPanel sumSection = new JPanel(new BorderLayout(0, 4));
+        sumSection.setOpaque(false);
+        JLabel sumHead = new JLabel("SUMMARY");
+        sumHead.setFont(sumHead.getFont().deriveFont(Font.BOLD, 15f));
+        sumSection.add(sumHead, BorderLayout.NORTH);
+
+        JPanel sumCard = new JPanel(new BorderLayout(0, 6));
+        sumCard.setBackground(UIUtil.cardBackground());
+        sumCard.setBorder(UIUtil.cardBorder());
+        JLabel sumTitle = new JLabel("REPORT SUMMARY");
+        sumTitle.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 18));
+        sumTitle.setForeground(UIUtil.BRAND);
+        sumCard.add(sumTitle, BorderLayout.NORTH);
+
         summaryArea.setEditable(false);
-        summaryArea.setBorder(BorderFactory.createTitledBorder("Summary"));
-        JPanel south = new JPanel(new BorderLayout());
-        south.add(summaryArea, BorderLayout.CENTER);
-        body.add(new JScrollPane(table), BorderLayout.CENTER);
-        body.add(south, BorderLayout.SOUTH);
+        summaryArea.setFont(new Font(Font.SANS_SERIF, Font.PLAIN, 15));
+        summaryArea.setOpaque(false);
+        summaryArea.setBorder(null);
+        summaryArea.setLineWrap(true);
+        summaryArea.setWrapStyleWord(true);
+        sumCard.add(summaryArea, BorderLayout.SOUTH);
+        sumSection.add(sumCard, BorderLayout.CENTER);
+
+        body.add(viewSection, BorderLayout.CENTER);
+        body.add(sumSection, BorderLayout.SOUTH);
         return body;
     }
 
-
-    // ---- report generation ----
+    /** True for columns whose content is numeric (Qty, FAT, SNF, Rate, Amount, Balance...). */
+    private static boolean isNumericColumn(String header) {
+        return "Qty".equalsIgnoreCase(header)
+                || "FAT".equalsIgnoreCase(header)
+                || "SNF".equalsIgnoreCase(header)
+                || "Rate".equalsIgnoreCase(header)
+                || "Amount".equalsIgnoreCase(header)
+                || "Total Qty".equalsIgnoreCase(header)
+                || "Avg FAT".equalsIgnoreCase(header)
+                || "Avg SNF".equalsIgnoreCase(header)
+                || "Avg Rate".equalsIgnoreCase(header)
+                || "Total Amount".equalsIgnoreCase(header)
+                || "Payment".equalsIgnoreCase(header)
+                || "Balance".equalsIgnoreCase(header);
+    }
+// ---- report generation ----
 
     private LocalDate from() {
         LocalDate d = fromPicker.getDate();
@@ -147,13 +371,9 @@ public class ReportsPanel extends JPanel {
         return d == null ? LocalDate.now() : d;
     }
 
+    /** Returns the selected customer id, or null for "All Customers". */
     private Integer customerId() {
-        String code = customerField.getText().trim();
-        if (ValidationUtil.isBlank(code)) {
-            return null;
-        }
-        Customer c = customerService.findByCode(code);
-        return c == null ? null : c.getId();
+        return selectedCustomer == null ? null : selectedCustomer.getId();
     }
 
     private String milkType() {
@@ -179,10 +399,8 @@ public class ReportsPanel extends JPanel {
 
     private String dairyName() {
         String name = settingsService.get("dairy.name");
-        return name.isBlank() ? AppConfig.APP_NAME : name;
+        return name == null || name.isBlank() ? AppConfig.APP_NAME : name;
     }
-
-
 
     private void renderDaily() {
         List<MilkCollection> records = reportService.milkRecords(from(), to(), customerId(), milkType(), shift());
@@ -242,7 +460,7 @@ public class ReportsPanel extends JPanel {
     private void renderCustomerReport() {
         Integer cid = customerId();
         if (cid == null) {
-            JOptionPane.showMessageDialog(this, "Enter a customer code for the customer report.",
+            UIUtil.showMessage(this, "Select a customer for the customer report.",
                     "Customer Report", JOptionPane.WARNING_MESSAGE);
             return;
         }
@@ -262,11 +480,10 @@ public class ReportsPanel extends JPanel {
         generatedTitle = "Customer Report";
         setSummary("Customer Report", s);
     }
-
     private void renderStatement() {
         Integer cid = customerId();
         if (cid == null) {
-            JOptionPane.showMessageDialog(this, "Enter a customer code for the customer statement.",
+            UIUtil.showMessage(this, "Select a customer for the customer statement.",
                     "Customer Statement", JOptionPane.WARNING_MESSAGE);
             return;
         }
@@ -319,9 +536,7 @@ public class ReportsPanel extends JPanel {
         sb.append("Average Rate: ").append(CurrencyUtil.formatMoney(s.getAvgRate())).append("/LTR");
         summaryArea.setText(sb.toString());
     }
-
-
-    // ---- print and export ----
+// ---- print and export ----
 
     private void printReport() {
         List<String> lines = new ArrayList<>();
@@ -358,7 +573,7 @@ public class ReportsPanel extends JPanel {
 
     private void exportCsv() {
         if (tableModel.getRowCount() == 0) {
-            JOptionPane.showMessageDialog(this, "Generate the report first.", "Export",
+            UIUtil.showMessage(this, "Generate the report first.", "Export",
                     JOptionPane.WARNING_MESSAGE);
             return;
         }
@@ -385,11 +600,12 @@ public class ReportsPanel extends JPanel {
                 }
                 rows.add(row);
             }
+            Files.createDirectories(file.toPath().getParent());
             CSVUtil.write(file.toPath(), rows);
-            JOptionPane.showMessageDialog(this, "Exported to " + file.getAbsolutePath(),
+            UIUtil.showMessage(this, "Exported to " + file.getAbsolutePath(),
                     "Export", JOptionPane.INFORMATION_MESSAGE);
         } catch (Exception ex) {
-            JOptionPane.showMessageDialog(this, "Export failed: " + ex.getMessage(),
+            UIUtil.showMessage(this, "Export failed: " + ex.getMessage(),
                     "Error", JOptionPane.ERROR_MESSAGE);
         }
     }
@@ -402,4 +618,3 @@ public class ReportsPanel extends JPanel {
         return (java.awt.Frame) c;
     }
 }
-

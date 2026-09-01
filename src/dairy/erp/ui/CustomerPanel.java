@@ -9,7 +9,6 @@ import dairy.erp.util.ValidationUtil;
 
 import javax.swing.BorderFactory;
 import javax.swing.ButtonGroup;
-import javax.swing.ImageIcon;
 import javax.swing.JButton;
 import javax.swing.JComboBox;
 import javax.swing.JFrame;
@@ -31,10 +30,7 @@ import java.awt.Font;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.GridLayout;
-import java.awt.Image;
 import java.awt.Insets;
-import java.awt.image.BufferedImage;
-import java.io.File;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
@@ -49,12 +45,12 @@ import java.util.List;
  */
 public class CustomerPanel extends JPanel {
 
-    private static final Font LABEL_FONT = new Font(Font.SANS_SERIF, Font.BOLD, 16);
-    private static final Font FIELD_FONT = new Font(Font.SANS_SERIF, Font.BOLD, 16);
+    private static final Font LABEL_FONT = new Font(Font.SANS_SERIF, Font.PLAIN, 17);
+    private static final Font FIELD_FONT = new Font(Font.SANS_SERIF, Font.PLAIN, 17);
 
     private final CustomerService customerService = new CustomerService();
     private final dairy.erp.service.SettingsService settingsService = new dairy.erp.service.SettingsService();
-    private final JLabel dairyNameLabel = new JLabel("", javax.swing.SwingConstants.CENTER);
+    private final dairy.erp.util.DairyNameLabel dairyNameLabel = new dairy.erp.util.DairyNameLabel();
 
     private final JTextField codeField = new JTextField(12);
     private final JTextField nameField = new JTextField(20);
@@ -106,9 +102,8 @@ public class CustomerPanel extends JPanel {
 
     /** Shows the dairy name (from Settings) in red, 28px bold, above the input fields. */
     private void loadDairyName() {
-        dairyNameLabel.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 28));
-        dairyNameLabel.setForeground(Color.RED);
-        dairyNameLabel.setBorder(BorderFactory.createEmptyBorder(40, 20, 20, 20));
+        // Golden logo-style dairy name (shared DairyNameLabel component).
+        dairyNameLabel.setBorder(BorderFactory.createEmptyBorder(0, 20, 0, 20));
         applyDairyName(settingsService.get("dairy.name"));
         // Live update: re-apply whenever Settings saves a new dairy name.
         dairy.erp.util.AppBus.onDairyNameChanged(this::applyDairyName);
@@ -119,23 +114,64 @@ public class CustomerPanel extends JPanel {
     }
 
     private JPanel buildMain() {
-        // Left column: logo header + customer fields. Right column: grid.
-        JPanel left = new JPanel(new BorderLayout(8, 6));
-        left.add(UIUtil.header("Customer Management"), BorderLayout.NORTH);
-        left.add(buildForm(), BorderLayout.CENTER);
-        left.setMinimumSize(new Dimension(350, 0));
-        left.setMaximumSize(new Dimension(500, Integer.MAX_VALUE));
+        // Left column: logo header + "Customer Details" card (fixed sidebar like the design).
+        JPanel left = new JPanel(new BorderLayout(8, 4));
+        left.setBackground(Color.WHITE);
+        left.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(new Color(0xd0, 0xd7, 0xde), 1, true),
+                BorderFactory.createEmptyBorder(2, 8, 8, 8)));
 
-        JPanel right = new JPanel(new BorderLayout(6, 6));
-        right.setBorder(BorderFactory.createTitledBorder("Customer List"));
+        // Header row: logo on the left, dairy name on the right (as in the design).
+        JPanel headerRow = new JPanel(new BorderLayout());
+        headerRow.setOpaque(false);
+        headerRow.add(UIUtil.header("Customer Management"), BorderLayout.CENTER);
+        headerRow.add(dairyNameLabel, BorderLayout.EAST);
+        left.add(headerRow, BorderLayout.NORTH);
+
+        // "Customer Details" bold heading above the form fields.
+        JPanel formCard = new JPanel(new BorderLayout(0, 4));
+        formCard.setOpaque(false);
+        JLabel detailsHeading = new JLabel("Customer Details");
+        detailsHeading.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 18));
+        detailsHeading.setBorder(BorderFactory.createEmptyBorder(4, 2, 2, 2));
+        formCard.add(detailsHeading, BorderLayout.NORTH);
+        formCard.add(buildForm(), BorderLayout.CENTER);
+        left.add(formCard, BorderLayout.CENTER);
+        // Fixed width wide enough for every field row to be fully visible
+        // on load; the user can still drag the divider to widen it.
+        left.setPreferredSize(new Dimension(470, 0));
+        left.setMinimumSize(new Dimension(470, 0));
+
+        // Right column: "Customer List" bold heading above the search bar and table.
+        JPanel right = new JPanel(new BorderLayout(4, 4));
+        JLabel listHeading = new JLabel("Customer List");
+        listHeading.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 18));
+        listHeading.setBorder(BorderFactory.createEmptyBorder(2, 6, 2, 2));
+        right.add(listHeading, BorderLayout.NORTH);
         right.add(buildTableArea(), BorderLayout.CENTER);
         right.setMinimumSize(new Dimension(400, 0));
 
-        // JSplitPane allows stretching left/right by dragging the divider
+        // JSplitPane allows stretching left/right by dragging the divider.
         JSplitPane split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, left, right);
-        split.setDividerLocation(460);
-        split.setResizeWeight(0.35);
+        split.setDividerLocation(470);
+        // All extra width goes to the table side so the form keeps its size.
+        split.setResizeWeight(0.0);
+        // JSplitPane clamps the divider while the panel has no size yet, which
+        // squeezes the form fields on load — apply the fixed width once the
+        // panel gets its real size (one-shot), so every field is visible.
+        split.addComponentListener(new java.awt.event.ComponentAdapter() {
+            private boolean applied = false;
+
+            @Override
+            public void componentResized(java.awt.event.ComponentEvent e) {
+                if (!applied && split.getWidth() > 0) {
+                    applied = true;
+                    split.setDividerLocation(470);
+                }
+            }
+        });
         split.setContinuousLayout(true);
+        split.setBorder(null);
 
         JPanel wrapper = new JPanel(new BorderLayout());
         wrapper.add(split, BorderLayout.CENTER);
@@ -156,6 +192,10 @@ public class CustomerPanel extends JPanel {
 
         // Fonts and sizing
         UIUtil.styleField(codeField, 12);
+        // Customer code is auto-generated and must not be edited by the user.
+        codeField.setEditable(false);
+        codeField.setFocusable(false);
+        codeField.setBackground(UIUtil.DISABLED_BG); // light grey read-only
         UIUtil.styleField(nameField, 20);
         UIUtil.styleField(mobileField, 14);
         UIUtil.styleField(addressField, 24);
@@ -185,22 +225,28 @@ public class CustomerPanel extends JPanel {
 
         // Readable striped table; shared with Rate Chart for an exact match.
         UIUtil.styleCustomerDetailsTable(table);
+        // Balanced column widths so every field reads clearly.
+        table.getColumnModel().getColumn(0).setPreferredWidth(120);
+        table.getColumnModel().getColumn(1).setPreferredWidth(160);
+        table.getColumnModel().getColumn(2).setPreferredWidth(130);
+        table.getColumnModel().getColumn(3).setPreferredWidth(110);
+        table.getColumnModel().getColumn(4).setPreferredWidth(130);
+        table.getColumnModel().getColumn(5).setPreferredWidth(100);
+        table.getColumnModel().getColumn(6).setPreferredWidth(110);
+        // Status column shows a coloured pill (green Active / grey Inactive).
+        table.getColumnModel().getColumn(5).setCellRenderer(new StatusBadgeRenderer());
     }
 
     private JPanel buildForm() {
-        // Outer container: left = fields, right = image placeholder, bottom = buttons
-        JPanel form = new JPanel(new BorderLayout(12, 8));
-        form.setBorder(BorderFactory.createTitledBorder(
-                BorderFactory.createLineBorder(new java.awt.Color(0x1a, 0x5f, 0x7a)),
-                "Customer Details"));
-        // Dairy name heading sits directly above the input fields.
-        form.add(dairyNameLabel, BorderLayout.NORTH);
+        // Fields + action buttons; the white card border comes from buildMain().
+        JPanel form = new JPanel(new BorderLayout(8, 8));
+        form.setOpaque(false);
 
         // Left: labels + fields in a grid (small top inset keeps fields high up)
         JPanel fieldsPanel = new JPanel(new GridBagLayout());
-        fieldsPanel.setMinimumSize(new Dimension(350, 600));
+        fieldsPanel.setOpaque(false);
         GridBagConstraints g = new GridBagConstraints();
-        g.insets = new Insets(25, 10, 10, 10); 
+        g.insets = new Insets(10, 12, 10, 12); 
         g.anchor = GridBagConstraints.WEST;
         g.fill = GridBagConstraints.HORIZONTAL;
 
@@ -216,22 +262,26 @@ public class CustomerPanel extends JPanel {
         addRow(fieldsPanel, g, row++, "Registration Date:", regDatePicker);
         addRow(fieldsPanel, g, row++, "Remarks:", remarksField);
 
-                // Buttons: compact coloured buttons (2x4 grid so every button is visible).
-        JPanel buttons = new JPanel(new GridLayout(2, 4, 8, 6));
-        newBtn = new JButton("New");
-        UIUtil.styleSmallButton(newBtn, new Color(0x1976D2));
+        // Buttons: 2x2 coloured grid (New / Save / Update / Delete) as in the design.
+        JPanel buttons = new JPanel(new GridLayout(2, 2, 10, 8));
+        newBtn = new JButton("+ New");
+        UIUtil.styleSmallButton(newBtn, new Color(0x19, 0x76, 0xd2));
+        newBtn.setIcon(dairy.erp.util.ButtonIcons.of("Plus", Color.WHITE));
         newBtn.addActionListener(e -> newRecord());
         buttons.add(newBtn);
         saveBtn = new JButton("Save");
-        UIUtil.styleSmallButton(saveBtn, new Color(0x2E7D32));
+        UIUtil.styleSmallButton(saveBtn, new Color(0x2e, 0x7d, 0x32));
+        saveBtn.setIcon(dairy.erp.util.ButtonIcons.of("Save", Color.WHITE));
         saveBtn.addActionListener(e -> saveRecord());
         buttons.add(saveBtn);
         updateBtn = new JButton("Update");
-        UIUtil.styleSmallButton(updateBtn, new Color(0xEF6C00));
+        UIUtil.styleSmallButton(updateBtn, new Color(0xef, 0x6c, 0x00));
+        updateBtn.setIcon(dairy.erp.util.ButtonIcons.of("Refresh", Color.WHITE));
         updateBtn.addActionListener(e -> updateRecord());
         buttons.add(updateBtn);
         deleteBtn = new JButton("Delete");
-        UIUtil.styleSmallButton(deleteBtn, new Color(0xC62828));
+        UIUtil.styleSmallButton(deleteBtn, new Color(0xc6, 0x28, 0x28));
+        deleteBtn.setIcon(dairy.erp.util.ButtonIcons.of("Trash", Color.WHITE));
         deleteBtn.addActionListener(e -> deleteRecord());
         buttons.add(deleteBtn);
 
@@ -239,54 +289,6 @@ public class CustomerPanel extends JPanel {
         form.add(buttons, BorderLayout.SOUTH);
         return form;
     }
-
-    /**
-     * The right-side image area. Shows only the registration-form banner image,
-     * sized tightly to the scaled image (no extra border or padding). Falls back
-     * to a small placeholder if the image cannot be loaded.
-     */
-    private JPanel buildImagePlaceholder() {
-        BufferedImage img = loadSectionImage();
-        if (img != null) {
-            int targetWidth = 440;
-            double ratio = (double) img.getHeight(null) / img.getWidth(null);
-            int targetHeight = (int) Math.round(targetWidth * ratio);
-            Image scaled = img.getScaledInstance(targetWidth, targetHeight, Image.SCALE_SMOOTH);
-
-            JPanel box = new JPanel(new BorderLayout());
-            box.setOpaque(false);
-            box.add(new JLabel(new ImageIcon(scaled)), BorderLayout.CENTER);
-            box.setPreferredSize(new Dimension(targetWidth, targetHeight));
-            return box;
-        }
-
-        // Fallback placeholder when the image file is unavailable
-        JPanel box = new JPanel(new BorderLayout());
-        JLabel placeholder = new JLabel("Photo", JLabel.CENTER);
-        placeholder.setFont(LABEL_FONT.deriveFont(Font.BOLD));
-        placeholder.setForeground(new java.awt.Color(0x88, 0x88, 0x88));
-        box.add(placeholder, BorderLayout.CENTER);
-        box.setPreferredSize(new Dimension(220, 250));
-        box.setBorder(BorderFactory.createLineBorder(new java.awt.Color(0xcc, 0xcc, 0xcc), 2));
-        return box;
-    }
-
-
-    /** Loads the registration-form banner image from resources/images. */
-    private BufferedImage loadSectionImage() {
-        File image = dairy.erp.config.AppConfig.getBaseDir()
-                .resolve("resources/images/banner.png").toFile();
-        try {
-            if (image.exists()) {
-                return javax.imageio.ImageIO.read(image);
-            }
-        } catch (Exception e) {
-            // ignore; fall back to placeholder
-        }
-        return null;
-    }
-
-
 
     /** Builds a flow panel containing the three milk-type radio buttons. */
     private JPanel milkTypePanel() {
@@ -317,21 +319,7 @@ public class CustomerPanel extends JPanel {
         }
     }
 
-    // private void addRow(JPanel form, GridBagConstraints g, int row, String label, java.awt.Component comp) {
-    //     JLabel lbl = new JLabel(label);
-    //     lbl.setFont(LABEL_FONT);
-    //     g.gridx = 0;
-    //     g.gridy = row;
-    //     g.gridwidth = 1;
-    //     g.weightx = 0;
-    //     g.fill = GridBagConstraints.NONE;
-    //     form.add(lbl, g);
-    //     g.gridx = 1;
-    //     g.gridwidth = 3;
-    //     g.weightx = 2.0;
-    //     g.fill = GridBagConstraints.HORIZONTAL;
-    //     form.add(comp, g);
-    // }
+
 
       private void addRow(JPanel form, GridBagConstraints g, int row,
                         String labelText, java.awt.Component comp) {
@@ -365,11 +353,11 @@ public class CustomerPanel extends JPanel {
         searchPanel.add(styledLabel("Status:"));
         searchPanel.add(searchStatusBox);
         JButton go = new JButton("Search");
-        UIUtil.styleSmallButton(go, new java.awt.Color(0x1e, 0x8e, 0x3e)); // green
+        UIUtil.styleSmallButton(go, new java.awt.Color(0x15, 0x65, 0xc0)); // blue
         go.addActionListener(e -> doSearch());
         searchPanel.add(go);
         JButton reset = new JButton("Reset");
-        UIUtil.styleSmallButton(reset, new java.awt.Color(0xd3, 0x2f, 0x2f)); // red
+        UIUtil.styleSmallButton(reset, new java.awt.Color(0x0d, 0x47, 0xa1)); // dark blue
         reset.addActionListener(e -> {
             searchCodeField.setText("");
             searchNameField.setText("");
@@ -461,70 +449,70 @@ public class CustomerPanel extends JPanel {
     private void saveRecord() {
         String error = validateForm();
         if (!error.isEmpty()) {
-            JOptionPane.showMessageDialog(this, error, "Validation", JOptionPane.WARNING_MESSAGE);
+            UIUtil.showMessage(this, error, "Validation", JOptionPane.WARNING_MESSAGE);
             return;
         }
         Customer c = collectForm();
         if (customerService.isCodeTaken(c.getCustomerCode(), -1)) {
-            JOptionPane.showMessageDialog(this,
+            UIUtil.showMessage(this,
                     "Customer code '" + c.getCustomerCode() + "' already exists.",
                     "Duplicate", JOptionPane.WARNING_MESSAGE);
             return;
         }
         try {
             customerService.add(c);
-            JOptionPane.showMessageDialog(this, "Customer saved successfully.",
+            UIUtil.showMessage(this, "Customer saved successfully.",
                     "Save", JOptionPane.INFORMATION_MESSAGE);
             loadAll();
             clearFields();
         } catch (RuntimeException ex) {
-            JOptionPane.showMessageDialog(this, ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+            UIUtil.showMessage(this, ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
         }
     }
 
     private void updateRecord() {
         if (editingId <= 0) {
-            JOptionPane.showMessageDialog(this,
+            UIUtil.showMessage(this,
                     "Double-click a row in the list to load it for updating.",
                     "Update", JOptionPane.WARNING_MESSAGE);
             return;
         }
         String error = validateForm();
         if (!error.isEmpty()) {
-            JOptionPane.showMessageDialog(this, error, "Validation", JOptionPane.WARNING_MESSAGE);
+            UIUtil.showMessage(this, error, "Validation", JOptionPane.WARNING_MESSAGE);
             return;
         }
         Customer c = collectForm();
         c.setId(editingId);
         if (customerService.isCodeTaken(c.getCustomerCode(), editingId)) {
-            JOptionPane.showMessageDialog(this,
+            UIUtil.showMessage(this,
                     "Customer code '" + c.getCustomerCode() + "' already exists.",
                     "Duplicate", JOptionPane.WARNING_MESSAGE);
             return;
         }
         try {
             customerService.update(c);
-            JOptionPane.showMessageDialog(this, "Customer updated successfully.",
+            UIUtil.showMessage(this, "Customer updated successfully.",
                     "Update", JOptionPane.INFORMATION_MESSAGE);
             loadAll();
             clearFields();
         } catch (RuntimeException ex) {
-            JOptionPane.showMessageDialog(this, ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+            UIUtil.showMessage(this, ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
         }
     }
 
 
     private void deleteRecord() {
         if (editingId <= 0) {
-            JOptionPane.showMessageDialog(this,
+            UIUtil.showMessage(this,
                     "Double-click a row in the list to load it for deletion.",
                     "Delete", JOptionPane.WARNING_MESSAGE);
             return;
         }
         String name = nameField.getText();
-        int confirm = JOptionPane.showConfirmDialog(this,
+        int confirm = UIUtil.confirm(this,
                 "Are you sure you want to delete this customer?\n" + name,
-                "Delete Customer", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
+                "Delete Customer");
         if (confirm != JOptionPane.YES_OPTION) {
             return;
         }
@@ -533,11 +521,11 @@ public class CustomerPanel extends JPanel {
             String msg = "DELETED".equals(result)
                     ? "Customer deleted successfully."
                     : "Customer has transaction history, so it was archived as Inactive.";
-            JOptionPane.showMessageDialog(this, msg, "Delete", JOptionPane.INFORMATION_MESSAGE);
+            UIUtil.showMessage(this, msg, "Delete", JOptionPane.INFORMATION_MESSAGE);
             loadAll();
             clearFields();
         } catch (RuntimeException ex) {
-            JOptionPane.showMessageDialog(this, ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+            UIUtil.showMessage(this, ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
         }
     }
 
@@ -656,6 +644,55 @@ public class CustomerPanel extends JPanel {
         }
     }
 
+    /**
+     * Renderer for the Status column: paints the row background with the same
+     * striping/selection colours as the shared table style, then draws a
+     * coloured pill — green for Active, grey for Inactive — as in the design.
+     */
+    private static class StatusBadgeRenderer extends JPanel
+            implements javax.swing.table.TableCellRenderer {
+
+        private String text = "";
+        private Color rowBackground = Color.WHITE;
+
+        @Override
+        public java.awt.Component getTableCellRendererComponent(JTable t, Object value,
+                boolean isSelected, boolean hasFocus, int row, int column) {
+            text = value == null ? "" : value.toString().trim();
+            rowBackground = isSelected
+                    ? new Color(0xd2, 0xec, 0xd9)
+                    : (row % 2 == 0 ? Color.WHITE : new Color(0xe8, 0xf1, 0xf7));
+            return this;
+        }
+
+        @Override
+        protected void paintComponent(java.awt.Graphics g) {
+            java.awt.Graphics2D g2 = (java.awt.Graphics2D) g.create();
+            g2.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING,
+                    java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
+            g2.setColor(rowBackground);
+            g2.fillRect(0, 0, getWidth(), getHeight());
+            if (!text.isEmpty()) {
+                boolean inactive = "Inactive".equalsIgnoreCase(text);
+                Color pill = inactive ? new Color(0xe0, 0xe0, 0xe0) : new Color(0xc8, 0xe6, 0xc9);
+                Color textColour = inactive ? new Color(0x61, 0x61, 0x61) : new Color(0x1b, 0x5e, 0x20);
+                java.awt.FontMetrics fm = g2.getFontMetrics();
+                int textWidth = fm.stringWidth(text);
+                int pillWidth = Math.max(24, Math.min(getWidth() - 12, textWidth + 20));
+                int pillHeight = Math.min(getHeight() - 12, 26);
+                int px = 6;
+                int py = (getHeight() - pillHeight) / 2;
+                g2.setColor(pill);
+                g2.fillRoundRect(px, py, pillWidth, pillHeight, pillHeight, pillHeight);
+                g2.setColor(textColour);
+                int tx = px + (pillWidth - textWidth) / 2;
+                int ty = py + (pillHeight - fm.getHeight()) / 2 + fm.getAscent();
+                g2.drawString(text, tx, ty);
+            }
+            g2.dispose();
+        }
+    }
+
     private static String nullToEmpty(String s) {
         return s == null ? "" : s;
     }
@@ -675,4 +712,3 @@ public class CustomerPanel extends JPanel {
         return (java.awt.Frame) c;
     }
 }
-

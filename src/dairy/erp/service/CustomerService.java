@@ -2,6 +2,7 @@ package dairy.erp.service;
 
 import dairy.erp.dao.CustomerDAO;
 import dairy.erp.model.Customer;
+import dairy.erp.util.AppBus;
 import dairy.erp.util.LogUtil;
 
 import java.sql.SQLException;
@@ -15,7 +16,6 @@ import java.util.logging.Logger;
 public class CustomerService {
 
     private static final Logger LOG = LogUtil.getLogger(CustomerService.class);
-    private static final String CODE_PREFIX = "CUST";
 
     private final CustomerDAO customerDAO = new CustomerDAO();
 
@@ -57,7 +57,9 @@ public class CustomerService {
 
     public int add(Customer c) {
         try {
-            return customerDAO.addCustomer(c);
+            int id = customerDAO.addCustomer(c);
+            AppBus.fireCustomersChanged();
+            return id;
         } catch (SQLException e) {
             LOG.severe("Add customer failed: " + e.getMessage());
             throw new RuntimeException("Could not add customer: " + e.getMessage(), e);
@@ -67,6 +69,7 @@ public class CustomerService {
     public void update(Customer c) {
         try {
             customerDAO.updateCustomer(c);
+            AppBus.fireCustomersChanged();
         } catch (SQLException e) {
             LOG.severe("Update customer failed: " + e.getMessage());
             throw new RuntimeException("Could not update customer: " + e.getMessage(), e);
@@ -81,9 +84,11 @@ public class CustomerService {
         try {
             boolean deleted = customerDAO.deleteCustomer(id);
             if (deleted) {
+                AppBus.fireCustomersChanged();
                 return "DELETED";
             }
             customerDAO.markInactive(id, true);
+            AppBus.fireCustomersChanged();
             return "DEACTIVATED";
         } catch (SQLException e) {
             LOG.severe("Delete customer failed: " + e.getMessage());
@@ -97,21 +102,22 @@ public class CustomerService {
     }
 
     /**
-     * Generates the next customer code (CUST001, CUST002, ...) based on the
-     * highest existing numeric suffix, so codes are never reused.
+     * Generates the next numeric-only customer code (01, 02, 03, ...) based on
+     * the highest existing numeric code, so codes are never reused. The code
+     * always starts from 01 and contains digits only.
      */
     public String nextCode() {
         try {
             String last = customerDAO.lastCustomerCode();
             int next = 1;
-            if (last != null && last.startsWith(CODE_PREFIX)) {
+            if (last != null && last.trim().matches("\\d+")) {
                 try {
-                    next = Integer.parseInt(last.substring(CODE_PREFIX.length())) + 1;
+                    next = Integer.parseInt(last.trim()) + 1;
                 } catch (NumberFormatException ignored) {
                     next = countAll() + 1;
                 }
             }
-            return String.format("%s%03d", CODE_PREFIX, next);
+            return String.format("%02d", next);
         } catch (SQLException e) {
             LOG.severe("Next code generation failed: " + e.getMessage());
             throw new RuntimeException("Could not generate customer code.", e);

@@ -2,9 +2,8 @@ package dairy.erp.ui;
 
 import dairy.erp.dao.RateChartDAO;
 import dairy.erp.model.RateChart;
+import dairy.erp.util.ButtonIcons;
 import dairy.erp.util.CurrencyUtil;
-import dairy.erp.util.DateUtil;
-import dairy.erp.util.PrintUtil;
 import dairy.erp.util.UIUtil;
 import dairy.erp.util.ValidationUtil;
 
@@ -17,6 +16,7 @@ import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JRadioButton;
 import javax.swing.JScrollPane;
+import javax.swing.JSeparator;
 import javax.swing.JTable;
 import javax.swing.JTextField;
 import javax.swing.ListSelectionModel;
@@ -29,7 +29,6 @@ import java.awt.FlowLayout;
 import java.awt.Font;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
-import java.awt.GridLayout;
 import java.awt.Insets;
 import java.math.BigDecimal;
 import java.sql.SQLException;
@@ -43,11 +42,11 @@ import java.util.List;
  */
 public class RateChartPanel extends JPanel {
 
-    private static final Font LABEL_FONT = new Font(Font.SANS_SERIF, Font.BOLD, 16);
+    private static final Font LABEL_FONT = new Font(Font.SANS_SERIF, Font.PLAIN, 16);
 
     private final RateChartDAO rateChartDAO = new RateChartDAO();
     private final dairy.erp.service.SettingsService settingsService = new dairy.erp.service.SettingsService();
-    private final JLabel dairyNameLabel = new JLabel("", javax.swing.SwingConstants.CENTER);
+    private final dairy.erp.util.DairyNameLabel dairyNameLabel = new dairy.erp.util.DairyNameLabel();
 
     private final JRadioButton cowRadio = new JRadioButton("Cow");
     private final JRadioButton buffaloRadio = new JRadioButton("Buffalo");
@@ -71,7 +70,8 @@ public class RateChartPanel extends JPanel {
     private JButton deleteBtn;
 
     private final DefaultTableModel tableModel = new DefaultTableModel(
-            new String[]{"ID", "Milk Type", "FAT Min", "FAT Max", "SNF Min", "SNF Max", "Rate/LTR", "Active"}, 0) {
+            new String[]{"Milk Type", "FAT Min", "FAT Max", "SNF Min", "SNF Max",
+                    "Rate/LTR", "Active"}, 0) {
         @Override
         public boolean isCellEditable(int row, int column) {
             return false;
@@ -79,23 +79,25 @@ public class RateChartPanel extends JPanel {
     };
     private final JTable table = new JTable(tableModel);
 
+    /** Rate rules parallel to the table rows (the table shows no ID column). */
+    private final List<RateChart> chartCache = new ArrayList<>();
+
     private int editingId = -1;
 
     private JPanel buildForm() {
-        JPanel outer = new JPanel(new BorderLayout(12, 8));
-        outer.setBorder(BorderFactory.createTitledBorder(
-                BorderFactory.createLineBorder(new java.awt.Color(0x1a, 0x5f, 0x7a)),
-                "Rate Chart"));
-        outer.add(dairyNameLabel, BorderLayout.NORTH);
-        outer.add(buildFormFields(), BorderLayout.CENTER);
-        return outer;
+        // Fields + one-row action bar; the white card border comes from buildMain().
+        JPanel form = new JPanel(new BorderLayout(0, 4));
+        form.setOpaque(false);
+        form.add(buildFormFields(), BorderLayout.CENTER);
+        form.add(buildButtonBar(), BorderLayout.SOUTH);
+        return form;
     }
 
     private JPanel buildFormFields() {
         JPanel fieldsPanel = new JPanel(new GridBagLayout());
-        fieldsPanel.setMinimumSize(new Dimension(350, 600));
+        fieldsPanel.setOpaque(false);
         GridBagConstraints g = new GridBagConstraints();
-        g.insets = new Insets(25, 10, 10, 10); 
+        g.insets = new Insets(9, 12, 9, 12);
         g.anchor = GridBagConstraints.WEST;
         g.fill = GridBagConstraints.HORIZONTAL;
 
@@ -110,43 +112,49 @@ public class RateChartPanel extends JPanel {
         addRow(fieldsPanel, g, row++, "Effective From:", fromPicker);
         addRow(fieldsPanel, g, row++, "Effective To:", toPicker);
 
-        g.gridx = 0; g.gridy = row; g.gridwidth = 2;
-        g.anchor = GridBagConstraints.CENTER;
-        g.fill = GridBagConstraints.NONE;
-        JPanel form = new JPanel(new BorderLayout());
-        form.add(fieldsPanel, BorderLayout.CENTER);
-        JPanel buttons = new JPanel(new FlowLayout(FlowLayout.CENTER, 12, 8));
-        JButton newBtn = new JButton("New");
+        return fieldsPanel;
+    }
+
+    /**
+     * Action buttons in a two-column grid — New/Save, Update/Delete and a
+     * full-width Clear — mirroring the Customer Details sidebar so every
+     * button stays visible inside the fixed-width panel.
+     */
+    private JPanel buildButtonBar() {
+        JPanel buttons = new JPanel(new GridBagLayout());
+        buttons.setOpaque(false);
+        GridBagConstraints bg = new GridBagConstraints();
+        bg.insets = new Insets(4, 4, 4, 4);
+        bg.fill = GridBagConstraints.HORIZONTAL;
+        bg.weightx = 1.0;
+
+        newBtn = new JButton("New", ButtonIcons.of("Plus", Color.WHITE));
         UIUtil.styleSmallButton(newBtn, new Color(0x1976D2));
         newBtn.addActionListener(e -> resetForNewEntry());
-        this.newBtn = newBtn;
-        buttons.add(newBtn);
-        saveBtn = new JButton("Save");
+        bg.gridx = 0; bg.gridy = 0;
+        buttons.add(newBtn, bg);
+        saveBtn = new JButton("Save", ButtonIcons.of("Save", Color.WHITE));
         UIUtil.styleSmallButton(saveBtn, new Color(0x2E7D32));
         saveBtn.addActionListener(e -> saveRecord());
-        this.saveBtn = saveBtn;
-        buttons.add(saveBtn);
-        updateBtn = new JButton("Update");
+        bg.gridx = 1; bg.gridy = 0;
+        buttons.add(saveBtn, bg);
+        updateBtn = new JButton("Update", ButtonIcons.of("Refresh", Color.WHITE));
         UIUtil.styleSmallButton(updateBtn, new Color(0xEF6C00));
         updateBtn.addActionListener(e -> updateRecord());
-        this.updateBtn = updateBtn;
-        buttons.add(updateBtn);
-        deleteBtn = new JButton("Delete");
+        bg.gridx = 0; bg.gridy = 1;
+        buttons.add(updateBtn, bg);
+        deleteBtn = new JButton("Delete", ButtonIcons.of("Trash", Color.WHITE));
         UIUtil.styleSmallButton(deleteBtn, new Color(0xC62828));
         deleteBtn.addActionListener(e -> deleteRecord());
-        this.deleteBtn = deleteBtn;
-        buttons.add(deleteBtn);
-        JButton clearBtn = new JButton("Clear");
+        bg.gridx = 1; bg.gridy = 1;
+        buttons.add(deleteBtn, bg);
+        JButton clearBtn = new JButton("Clear", ButtonIcons.of("Cross", Color.WHITE));
         UIUtil.styleSmallButton(clearBtn, new Color(0x607D8B));
-        clearBtn.addActionListener(e -> clearFields());
-        buttons.add(clearBtn);
-        JButton printBtn = new JButton("Print");
-        UIUtil.styleSmallButton(printBtn, new Color(0x607D8B));
-        printBtn.addActionListener(e -> printList());
-        buttons.add(printBtn);
-        form.add(fieldsPanel, BorderLayout.CENTER);
-        form.add(buttons, BorderLayout.SOUTH);
-        return form;
+        clearBtn.addActionListener(e -> resetForNewEntry());
+        // Same size as the other buttons: single grid cell, no full-width span.
+        bg.gridx = 0; bg.gridy = 2; bg.gridwidth = 1;
+        buttons.add(clearBtn, bg);
+        return buttons;
     }
 
     /** Adds one label + full-width field row to a two-column vertical form. */
@@ -211,6 +219,7 @@ public class RateChartPanel extends JPanel {
     private JPanel buildTable() {
         JPanel area = new JPanel(new BorderLayout());
         JScrollPane scroll = new JScrollPane(table);
+        scroll.getViewport().setBackground(Color.WHITE);
         table.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         table.addMouseListener(new java.awt.event.MouseAdapter() {
             @Override
@@ -222,6 +231,15 @@ public class RateChartPanel extends JPanel {
         });
         area.add(scroll, BorderLayout.CENTER);
         return area;
+    }
+
+    /** Column widths plus the Yes/No pill renderer. */
+    private void configureTableColumns() {
+        int[] widths = {110, 80, 80, 80, 80, 90, 90};
+        for (int i = 0; i < widths.length; i++) {
+            table.getColumnModel().getColumn(i).setPreferredWidth(widths[i]);
+        }
+        table.getColumnModel().getColumn(6).setCellRenderer(new YesNoBadgeRenderer());
     }
 
 
@@ -253,16 +271,15 @@ public class RateChartPanel extends JPanel {
         UIUtil.styleComponent(activeNoRadio, 18);
         // Use exactly the same shared styling as the Customer Details grid.
         UIUtil.styleCustomerDetailsTable(table);
+        configureTableColumns();
         add(buildMain(), BorderLayout.CENTER);
         resetForNewEntry();
         loadAll();
     }
 
-    /** Shows the dairy name (from Settings) in red, 28px bold — identical to Customer Details. */
+    /** Shows the dairy name in the golden logo style — identical on every panel. */
     private void loadDairyName() {
-        dairyNameLabel.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 28));
-        dairyNameLabel.setForeground(Color.RED);
-        dairyNameLabel.setBorder(BorderFactory.createEmptyBorder(40, 20, 20, 20));
+        dairyNameLabel.setBorder(BorderFactory.createEmptyBorder(0, 20, 0, 20));
         applyDairyName(settingsService.get("dairy.name"));
         // Live update: re-apply whenever Settings saves a new dairy name.
         dairy.erp.util.AppBus.onDairyNameChanged(this::applyDairyName);
@@ -272,42 +289,101 @@ public class RateChartPanel extends JPanel {
         dairyNameLabel.setText(name == null || name.isBlank() ? "SRS Dairy ERP" : name);
     }
     private JPanel buildMain() {
-        // Left column: logo header + rate rule fields. Right column: grid.
-        JPanel left = new JPanel(new BorderLayout(8, 6));
-        left.add(UIUtil.header("Rate Chart"), BorderLayout.NORTH);
-        left.add(buildForm(), BorderLayout.CENTER);
-        left.setMinimumSize(new Dimension(350, 0));
-        left.setMaximumSize(new Dimension(500, Integer.MAX_VALUE));
+        // Left column: white sidebar card — header row, "Manage Rate Chart"
+        // heading, the fields and the one-row action bar (as in the design).
+        JPanel left = new JPanel(new BorderLayout(0, 4));
+        left.setBackground(Color.WHITE);
+        left.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(new Color(0xd0, 0xd7, 0xde), 1, true),
+                BorderFactory.createEmptyBorder(2, 8, 8, 8)));
 
-        JPanel right = new JPanel(new BorderLayout(6, 6));
-        right.setBorder(BorderFactory.createTitledBorder("Rate Chart"));
+        // Header row: logo on the left, dairy name on the right (as in the design).
+        JPanel headerRow = new JPanel(new BorderLayout());
+        headerRow.setOpaque(false);
+        headerRow.add(UIUtil.header("Rate Chart"), BorderLayout.CENTER);
+        headerRow.add(dairyNameLabel, BorderLayout.EAST);
+        left.add(headerRow, BorderLayout.NORTH);
+
+        // Card content: "Manage Rate Chart" heading + fields + action buttons,
+        // structured exactly like the Customer Details sidebar so the buttons
+        // are always visible without stretching the panel.
+        JPanel formCard = new JPanel(new BorderLayout(0, 4));
+        formCard.setOpaque(false);
+        JPanel manageHeadingPanel = new JPanel(new BorderLayout(0, 2));
+        manageHeadingPanel.setOpaque(false);
+        JLabel manageHeading = new JLabel("Manage Rate Chart");
+        manageHeading.setFont(new Font(Font.SANS_SERIF, Font.PLAIN, 18));
+        manageHeading.setBorder(BorderFactory.createEmptyBorder(4, 2, 2, 2));
+        manageHeadingPanel.add(manageHeading, BorderLayout.NORTH);
+        manageHeadingPanel.add(new JSeparator(), BorderLayout.SOUTH);
+        formCard.add(manageHeadingPanel, BorderLayout.NORTH);
+        formCard.add(buildForm(), BorderLayout.CENTER);
+        left.add(formCard, BorderLayout.CENTER);
+        // Fixed width wide enough for every field row to be fully visible
+        // on load; the user can still drag the divider to widen it.
+        left.setPreferredSize(new Dimension(460, 0));
+        left.setMinimumSize(new Dimension(460, 0));
+
+        // Right column: white card with a "Data Table" heading above the grid.
+        JPanel right = new JPanel(new BorderLayout(4, 4));
+        right.setBackground(Color.WHITE);
+        right.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(new Color(0xd0, 0xd7, 0xde), 1, true),
+                BorderFactory.createEmptyBorder(2, 10, 8, 10)));
+        JPanel tableHeadingPanel = new JPanel(new BorderLayout(0, 2));
+        tableHeadingPanel.setOpaque(false);
+        JLabel tableHeading = new JLabel("Rate Chart");
+        tableHeading.setFont(new Font(Font.SANS_SERIF, Font.PLAIN, 18));
+        tableHeading.setBorder(BorderFactory.createEmptyBorder(6, 2, 2, 2));
+        tableHeadingPanel.add(tableHeading, BorderLayout.NORTH);
+        tableHeadingPanel.add(new JSeparator(), BorderLayout.SOUTH);
+        right.add(tableHeadingPanel, BorderLayout.NORTH);
         right.add(buildTable(), BorderLayout.CENTER);
         right.setMinimumSize(new Dimension(400, 0));
 
-        // JSplitPane allows stretching left/right by dragging the divider
+        // JSplitPane allows stretching left/right by dragging the divider.
         JSplitPane split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, left, right);
-        split.setDividerLocation(450);
-        split.setResizeWeight(0.35);
+        split.setDividerLocation(460);
+        // All extra width goes to the table side so the form keeps its size.
+        split.setResizeWeight(0.0);
+        // JSplitPane clamps the divider while the panel has no size yet, which
+        // squeezes the form fields on load — apply the fixed width once the
+        // panel gets its real size (one-shot), so every field is visible.
+        split.addComponentListener(new java.awt.event.ComponentAdapter() {
+            private boolean applied = false;
+
+            @Override
+            public void componentResized(java.awt.event.ComponentEvent e) {
+                if (!applied && split.getWidth() > 0) {
+                    applied = true;
+                    split.setDividerLocation(460);
+                }
+            }
+        });
         split.setContinuousLayout(true);
+        split.setBorder(null);
 
         JPanel wrapper = new JPanel(new BorderLayout());
         wrapper.add(split, BorderLayout.CENTER);
         return wrapper;
     }
     private void loadAll() {
-
-
+        // Refresh the whole grid: clear rows and the parallel rule cache first
+        // so save/update/delete never leaves duplicate rows behind.
+        tableModel.setRowCount(0);
+        chartCache.clear();
         try {
             for (RateChart r : rateChartDAO.findAll()) {
+                chartCache.add(r);
                 tableModel.addRow(new Object[]{
-                        r.getId(), r.getMilkType(),
+                        r.getMilkType(),
                         CurrencyUtil.format(r.getFatMin()), CurrencyUtil.format(r.getFatMax()),
                         CurrencyUtil.format(r.getSnfMin()), CurrencyUtil.format(r.getSnfMax()),
                         CurrencyUtil.format(r.getRatePerLitre()), r.isActive() ? "Yes" : "No"
                 });
             }
         } catch (SQLException e) {
-            JOptionPane.showMessageDialog(this, "Could not load rate chart: " + e.getMessage(),
+            UIUtil.showMessage(this, "Could not load rate chart: " + e.getMessage(),
                     "Error", JOptionPane.ERROR_MESSAGE);
         }
     }
@@ -315,6 +391,7 @@ public class RateChartPanel extends JPanel {
     public void resetForNewEntry() {
         clearFields();
         fromPicker.setDate(LocalDate.now());
+        toPicker.setDate(LocalDate.now());
         editingId = -1;
         // Default selection: Cow
         milkTypeGroup.clearSelection();
@@ -357,42 +434,42 @@ public class RateChartPanel extends JPanel {
     private void saveRecord() {
         String error = validateForm();
         if (!error.isEmpty()) {
-            JOptionPane.showMessageDialog(this, error, "Validation", JOptionPane.WARNING_MESSAGE);
+            UIUtil.showMessage(this, error, "Validation", JOptionPane.WARNING_MESSAGE);
             return;
         }
         try {
             rateChartDAO.add(collectForm());
-            JOptionPane.showMessageDialog(this, "Rate rule saved successfully.", "Save",
+            UIUtil.showMessage(this, "Rate rule saved successfully.", "Save",
                     JOptionPane.INFORMATION_MESSAGE);
             loadAll();
             clearFields();
         } catch (SQLException e) {
-            JOptionPane.showMessageDialog(this, "Could not save: " + e.getMessage(),
+            UIUtil.showMessage(this, "Could not save: " + e.getMessage(),
                     "Error", JOptionPane.ERROR_MESSAGE);
         }
     }
 
     private void updateRecord() {
         if (editingId <= 0) {
-            JOptionPane.showMessageDialog(this, "Double-click a rule to edit it first.",
+            UIUtil.showMessage(this, "Double-click a rule to edit it first.",
                     "Update", JOptionPane.WARNING_MESSAGE);
             return;
         }
         String error = validateForm();
         if (!error.isEmpty()) {
-            JOptionPane.showMessageDialog(this, error, "Validation", JOptionPane.WARNING_MESSAGE);
+            UIUtil.showMessage(this, error, "Validation", JOptionPane.WARNING_MESSAGE);
             return;
         }
         RateChart r = collectForm();
         r.setId(editingId);
         try {
             rateChartDAO.update(r);
-            JOptionPane.showMessageDialog(this, "Rate rule updated successfully.", "Update",
+            UIUtil.showMessage(this, "Rate rule updated successfully.", "Update",
                     JOptionPane.INFORMATION_MESSAGE);
             loadAll();
             clearFields();
         } catch (SQLException e) {
-            JOptionPane.showMessageDialog(this, "Could not update: " + e.getMessage(),
+            UIUtil.showMessage(this, "Could not update: " + e.getMessage(),
                     "Error", JOptionPane.ERROR_MESSAGE);
         }
     }
@@ -400,24 +477,28 @@ public class RateChartPanel extends JPanel {
 
     private void deleteRecord() {
         if (editingId <= 0) {
-            JOptionPane.showMessageDialog(this, "Double-click a rule to delete it first.",
+            UIUtil.showMessage(this, "Double-click a rule to delete it first.",
                     "Delete", JOptionPane.WARNING_MESSAGE);
             return;
         }
-        int confirm = JOptionPane.showConfirmDialog(this,
-                "Are you sure you want to delete this rate rule?", "Delete Rate Rule",
-                JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
+        deleteById(editingId);
+    }
+
+    /** Confirms and deletes the rule with the given id, then reloads the grid. */
+    private void deleteById(int id) {
+        int confirm = UIUtil.confirm(this,
+                "Are you sure you want to delete this rate rule?", "Delete Rate Rule");
         if (confirm != JOptionPane.YES_OPTION) {
             return;
         }
         try {
-            rateChartDAO.delete(editingId);
-            JOptionPane.showMessageDialog(this, "Rate rule deleted.", "Delete",
+            rateChartDAO.delete(id);
+            UIUtil.showMessage(this, "Rate rule deleted.", "Delete",
                     JOptionPane.INFORMATION_MESSAGE);
             loadAll();
             clearFields();
         } catch (SQLException e) {
-            JOptionPane.showMessageDialog(this, "Could not delete: " + e.getMessage(),
+            UIUtil.showMessage(this, "Could not delete: " + e.getMessage(),
                     "Error", JOptionPane.ERROR_MESSAGE);
         }
     }
@@ -428,28 +509,22 @@ public class RateChartPanel extends JPanel {
         if (row < 0) {
             return;
         }
-        int id = ((Number) tableModel.getValueAt(row, 0)).intValue();
-        try {
-            for (RateChart r : rateChartDAO.findAll()) {
-                if (r.getId() == id) {
-                    editingId = id;
-                    selectMilkType(r.getMilkType());
-                    fatMinField.setText(r.getFatMin().toPlainString());
-                    fatMaxField.setText(r.getFatMax().toPlainString());
-                    snfMinField.setText(r.getSnfMin().toPlainString());
-                    snfMaxField.setText(r.getSnfMax().toPlainString());
-                    rateField.setText(r.getRatePerLitre().toPlainString());
-                    fromPicker.setDate(r.getEffectiveFrom());
-                    toPicker.setDate(r.getEffectiveTo());
-                    selectActive(r.isActive() ? "Yes" : "No");
-                    toggleButtons(true);
-                    break;
-                }
-            }
-        } catch (SQLException e) {
-            JOptionPane.showMessageDialog(this, "Could not load rule: " + e.getMessage(),
-                    "Error", JOptionPane.ERROR_MESSAGE);
+        int modelRow = table.convertRowIndexToModel(row);
+        if (modelRow >= chartCache.size()) {
+            return;
         }
+        RateChart r = chartCache.get(modelRow);
+        editingId = r.getId();
+        selectMilkType(r.getMilkType());
+        fatMinField.setText(r.getFatMin().toPlainString());
+        fatMaxField.setText(r.getFatMax().toPlainString());
+        snfMinField.setText(r.getSnfMin().toPlainString());
+        snfMaxField.setText(r.getSnfMax().toPlainString());
+        rateField.setText(r.getRatePerLitre().toPlainString());
+        fromPicker.setDate(r.getEffectiveFrom());
+        toPicker.setDate(r.getEffectiveTo());
+        selectActive(r.isActive() ? "Yes" : "No");
+        toggleButtons(true);
     }
 
 
@@ -490,31 +565,53 @@ public class RateChartPanel extends JPanel {
         else activeNoRadio.setSelected(true);
     }
 
-    private void printList() {
-        List<String> lines = new ArrayList<>();
-        lines.add("Rate Chart");
-        lines.add("=".repeat(70));
-        lines.add(String.format("%-9s %-8s %-8s %-8s %-8s %-8s %s",
-                "Milk", "FAT Min", "FAT Max", "SNF Min", "SNF Max", "Rate/LTR", "Active"));
-        lines.add("-".repeat(70));
-        try {
-            for (RateChart r : rateChartDAO.findAll()) {
-                lines.add(String.format("%-9s %-8s %-8s %-8s %-8s %-8s %s",
-                        nullToEmpty(r.getMilkType()),
-                        CurrencyUtil.format(r.getFatMin()), CurrencyUtil.format(r.getFatMax()),
-                        CurrencyUtil.format(r.getSnfMin()), CurrencyUtil.format(r.getSnfMax()),
-                        CurrencyUtil.format(r.getRatePerLitre()), r.isActive() ? "Yes" : "No"));
-            }
-        } catch (SQLException e) {
-            JOptionPane.showMessageDialog(this, "Could not load rate chart: " + e.getMessage(),
-                    "Error", JOptionPane.ERROR_MESSAGE);
-            return;
-        }
-        PrintUtil.printText(findOwner(), "Rate Chart", lines, true);
-    }
+    /**
+     * Renderer for the Active column: paints the row background with the same
+     * striping/selection colours as the shared table style, then draws a
+     * coloured pill — green for Yes, grey for No — as in the design.
+     */
+    private static class YesNoBadgeRenderer extends JPanel
+            implements javax.swing.table.TableCellRenderer {
 
-    private static String nullToEmpty(String s) {
-        return s == null ? "" : s;
+        private String text = "";
+        private Color rowBackground = Color.WHITE;
+
+        @Override
+        public java.awt.Component getTableCellRendererComponent(JTable t, Object value,
+                boolean isSelected, boolean hasFocus, int row, int column) {
+            text = value == null ? "" : value.toString().trim();
+            rowBackground = isSelected
+                    ? new Color(0xd2, 0xec, 0xd9)
+                    : (row % 2 == 0 ? Color.WHITE : new Color(0xe8, 0xf1, 0xf7));
+            return this;
+        }
+
+        @Override
+        protected void paintComponent(java.awt.Graphics g) {
+            java.awt.Graphics2D g2 = (java.awt.Graphics2D) g.create();
+            g2.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING,
+                    java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
+            g2.setColor(rowBackground);
+            g2.fillRect(0, 0, getWidth(), getHeight());
+            if (!text.isEmpty()) {
+                boolean no = "No".equalsIgnoreCase(text);
+                Color pill = no ? new Color(0xe0, 0xe0, 0xe0) : new Color(0xc8, 0xe6, 0xc9);
+                Color textColour = no ? new Color(0x61, 0x61, 0x61) : new Color(0x1b, 0x5e, 0x20);
+                java.awt.FontMetrics fm = g2.getFontMetrics();
+                int textWidth = fm.stringWidth(text);
+                int pillWidth = Math.max(24, Math.min(getWidth() - 12, textWidth + 20));
+                int pillHeight = Math.min(getHeight() - 12, 26);
+                int px = 6;
+                int py = (getHeight() - pillHeight) / 2;
+                g2.setColor(pill);
+                g2.fillRoundRect(px, py, pillWidth, pillHeight, pillHeight, pillHeight);
+                g2.setColor(textColour);
+                int tx = px + (pillWidth - textWidth) / 2;
+                int ty = py + (pillHeight - fm.getHeight()) / 2 + fm.getAscent();
+                g2.drawString(text, tx, ty);
+            }
+            g2.dispose();
+        }
     }
 
     private java.awt.Frame findOwner() {

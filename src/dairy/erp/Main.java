@@ -6,6 +6,7 @@ import dairy.erp.service.SettingsService;
 import dairy.erp.ui.LoginFrame;
 import dairy.erp.ui.MainFrame;
 import dairy.erp.util.LogUtil;
+import dairy.erp.util.UIUtil;
 
 import javax.swing.JOptionPane;
 import javax.swing.SwingUtilities;
@@ -50,9 +51,17 @@ public class Main {
             }
             // Apply display configuration (currency symbol, decimal places) saved in Settings,
             // so custom values persist across restarts (not just during a save).
-            new SettingsService().applyDisplayConfig();
+            SettingsService settingsService = new SettingsService();
+            settingsService.applyDisplayConfig();
             // Apply a uniform 18px theme and larger buttons to every panel.
             dairy.erp.util.UIUtil.applyGlobalFont();
+            // Apply the saved visual theme (brand colour, accents) so the whole
+            // application starts in the theme the user last selected.
+            dairy.erp.util.UIUtil.applyTheme(
+                    dairy.erp.util.Theme.byId(settingsService.get("app.theme")));
+            // Apply the saved UI language (English / Hindi) chosen on the
+            // login screen so the whole application starts bilingual.
+            dairy.erp.util.I18n.setLanguage(settingsService.get("app.language"));
             SwingUtilities.invokeLater(Main::showLogin);
         } catch (Exception e) {
             LOG.severe("Application failed to initialise: " + e.getMessage());
@@ -61,7 +70,7 @@ public class Main {
                 System.exit(1);
             }
             e.printStackTrace();
-            JOptionPane.showMessageDialog(null,
+            UIUtil.showMessage(null,
                     "Failed to initialise the application:\n" + e.getMessage(),
                     "Error", JOptionPane.ERROR_MESSAGE);
         }

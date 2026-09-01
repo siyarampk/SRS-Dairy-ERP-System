@@ -119,6 +119,9 @@ public final class DatabaseInitializer {
             "  created_at TEXT" +
             ")";
 
+    /** Sample seed data is intentionally disabled: the app starts with a clean database. */
+    private static final boolean SEED_SAMPLE_DATA = false;
+
     /**
      * Runs the full initialization sequence.
      * @return true when the database is brand new (and sample data was loaded)
@@ -131,8 +134,12 @@ public final class DatabaseInitializer {
         seedAdminUser();
         seedDefaultSettings();
         if (isNew) {
-            seedSampleData();
-            LOG.info("Sample data loaded because database is new.");
+            if (SEED_SAMPLE_DATA) {
+                seedSampleData();
+                LOG.info("Sample data loaded because database is new.");
+            } else {
+                LOG.info("Sample data seeding disabled; starting with a clean database.");
+            }
         }
         recordStartup("APPLICATION_START", "Application initialized. New database = " + isNew);
         LOG.info("Database initialized successfully. New database = " + isNew);
@@ -172,22 +179,38 @@ public final class DatabaseInitializer {
     }
 
 
+    /** The two admin accounts the application ships with. */
+    private static final String[][] ADMIN_USERS = {
+            {"ramkesh", "ramkesh@86"},
+            {"siyarampk", "Siyaram@123"}
+    };
+
     private static void seedAdminUser() throws SQLException {
         try (Connection c = DatabaseManager.getConnection()) {
-            try (PreparedStatement count = c.prepareStatement("SELECT COUNT(*) FROM users");
-                 ResultSet rs = count.executeQuery()) {
-                if (rs.next() && rs.getInt(1) == 0) {
-                    String hashed = HashUtil.hashPassword(AppConfig.DEFAULT_ADMIN_PASS);
-                    try (PreparedStatement ins = c.prepareStatement(
-                            "INSERT INTO users(username, password, created_at, updated_at) " +
-                            "VALUES(?, ?, datetime('now'), datetime('now'))")) {
-                        ins.setString(1, AppConfig.DEFAULT_ADMIN_USER);
-                        ins.setString(2, hashed);
-                        ins.executeUpdate();
-                    }
-                    LOG.info("Default admin user seeded.");
+            for (String[] u : ADMIN_USERS) {
+                insertUserIfMissing(c, u[0], u[1]);
+            }
+            LOG.info("Admin users ensured: " + ADMIN_USERS.length + " accounts.");
+        }
+    }
+
+    /** Inserts a user with the given (hashed) password unless the username exists. */
+    private static void insertUserIfMissing(Connection c, String username, String password) throws SQLException {
+        try (PreparedStatement check = c.prepareStatement("SELECT COUNT(*) FROM users WHERE username = ?")) {
+            check.setString(1, username);
+            try (ResultSet rs = check.executeQuery()) {
+                if (rs.next() && rs.getInt(1) > 0) {
+                    return;
                 }
             }
+        }
+        String hashed = HashUtil.hashPassword(password);
+        try (PreparedStatement ins = c.prepareStatement(
+                "INSERT INTO users(username, password, created_at, updated_at) " +
+                "VALUES(?, ?, datetime('now'), datetime('now'))")) {
+            ins.setString(1, username);
+            ins.setString(2, hashed);
+            ins.executeUpdate();
         }
     }
 

@@ -2,6 +2,9 @@ package dairy.erp.ui;
 
 import dairy.erp.config.AppConfig;
 import dairy.erp.ui.dialogs.PasswordChangeDialog;
+import dairy.erp.util.AppBus;
+import dairy.erp.util.Theme;
+import dairy.erp.util.UIUtil;
 
 import javax.swing.BorderFactory;
 import javax.swing.JComponent;
@@ -16,6 +19,7 @@ import javax.swing.KeyStroke;
 import javax.swing.WindowConstants;
 import java.awt.BorderLayout;
 import java.awt.CardLayout;
+import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.event.ActionEvent;
@@ -40,6 +44,8 @@ public class MainFrame extends JFrame {
     private final Map<String, String> panelNames = new HashMap<>();
     private final JLabel statusLabel = new JLabel();
     private JLabel menuLabel = new JLabel();
+    private javax.swing.JMenuBar menuBar;
+    private JPanel menuTitleBar;
 
     public MainFrame(String username, Runnable onLogout) {
         super(AppConfig.APP_NAME);
@@ -60,6 +66,27 @@ public class MainFrame extends JFrame {
         buildContent();
         installFunctionKeys();
         showDashboard();
+        // Translate every label, button, menu and tab of the whole window
+        // into the language chosen on the login screen (English / Hindi).
+        dairy.erp.util.I18n.apply(this);
+
+        // Re-colour the frame chrome whenever the theme changes.
+        AppBus.onThemeChanged(this::applyTheme);
+    }
+
+    /** Applies the given theme's colours to the menu bar and status bar. */
+    private void applyTheme(Theme theme) {
+        if (menuBar != null) {
+            menuBar.setBackground(theme.getBrand());
+            menuBar.setBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, theme.getBrandDark()));
+        }
+        if (menuTitleBar != null) {
+            menuTitleBar.setBackground(theme.getBrand());
+        }
+        if (statusLabel != null) {
+            statusLabel.getParent().setBackground(theme.getTint());
+        }
+        getRootPane().repaint();
     }
 
 
@@ -76,25 +103,29 @@ public class MainFrame extends JFrame {
         registerPanel("ratechart", "Rate Chart", new RateChartPanel());
         registerPanel("milkentry", "Milk Collection", new MilkCollectionPanel());
         registerPanel("payments", "Payments", new PaymentPanel());
-        registerPanel("ledger", "Customer Ledger", new CustomerLedgerPanel());
-        registerPanel("reports", "Reports", new ReportsPanel());
+        registerPanel("ledger", "Customer Ledger", new CustomerLedgerPanel(username));
+        registerPanel("reports", "Reports", new ReportsPanel(username));
         registerPanel("settings", "Settings", new SettingsPanel(username));
-        registerPanel("data", "Import / Export / Backup", new ImportExportPanel());
+        registerPanel("data", "Import / Export / Backup", new ImportExportPanel(username));
 
         add(cardPanel, BorderLayout.CENTER);
 
         // ---- Current menu title bar ----
-        JPanel menuBar = new JPanel(new BorderLayout());
-        menuBar.setBackground(new java.awt.Color(0x1a, 0x5f, 0x7a));
-        menuBar.setBorder(BorderFactory.createEmptyBorder(6, 15, 6, 15));
+        menuTitleBar = new JPanel(new BorderLayout());
+        menuTitleBar.setBackground(UIUtil.BRAND);
+        menuTitleBar.setBorder(BorderFactory.createEmptyBorder(6, 15, 6, 15));
         menuLabel = new JLabel("Dashboard");
         menuLabel.setFont(new java.awt.Font("Arial", java.awt.Font.BOLD, 16));
         menuLabel.setForeground(java.awt.Color.WHITE);
-        menuBar.add(menuLabel, BorderLayout.WEST);
-        add(menuBar, BorderLayout.NORTH);
+        menuTitleBar.add(menuLabel, BorderLayout.WEST);
+        add(menuTitleBar, BorderLayout.NORTH);
 
         JPanel status = new JPanel(new BorderLayout());
+        status.setBackground(new Color(0xec, 0xf0, 0xf3));
+        status.setOpaque(true);
+        status.setBorder(BorderFactory.createMatteBorder(1, 0, 0, 0, new Color(0xd8, 0xde, 0xe4)));
         JPanel left = new JPanel(new FlowLayout(FlowLayout.LEFT, 12, 4));
+        left.setOpaque(false);
         left.add(new JLabel("User: " + username));
         left.add(new JLabel("Date: " + LocalDate.now().format(DateTimeFormatter.ofPattern("dd-MM-yyyy"))));
         status.add(left, BorderLayout.WEST);
@@ -112,7 +143,7 @@ public class MainFrame extends JFrame {
      * mode (e.g. New Collection vs Collection History).
      */
     private void showPanel(String key, String mode) {
-        String title = panelNames.getOrDefault(key, "Dashboard");
+        String title = dairy.erp.util.I18n.t(panelNames.getOrDefault(key, "Dashboard"));
         if ("dashboard".equals(key)) {
             dashboardPanel.refresh();
         } else if ("customers".equals(key)) {
@@ -135,9 +166,24 @@ public class MainFrame extends JFrame {
         }
 
         cardLayout.show(cardPanel, key);
-        setTitle(AppConfig.APP_NAME + "  — " + title);
-        statusLabel.setText(title);
-        menuLabel.setText(title);
+
+        // Mode-aware heading (e.g. "New Payment" vs "Payment History"): the
+        // window title, status bar and the blue banner must all follow the
+        // selected menu item, not just the panel name.
+        String heading = title;
+        if ("milkentry".equals(key)) {
+            heading = "history".equals(mode) ? "Collection History" : "New Collection";
+        } else if ("payments".equals(key)) {
+            heading = "history".equals(mode) ? "Payment History" : "New Payment";
+        }
+        heading = dairy.erp.util.I18n.t(heading);
+
+        setTitle(AppConfig.APP_NAME + "  — " + heading);
+        statusLabel.setText(heading);
+
+        // The blue banner below the menu bar shows the exact menu item the
+        // user selected (e.g. "Collection History", "New Payment").
+        menuLabel.setText(heading);
     }
 
     private void showDashboard() {
@@ -162,6 +208,10 @@ public class MainFrame extends JFrame {
 
     private void buildMenu() {
         JMenuBar bar = new JMenuBar();
+        // Brand-themed menu bar: teal background with white menu titles.
+        bar.setBackground(UIUtil.BRAND);
+        bar.setBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, UIUtil.BRAND.darker()));
+        menuBar = bar;
 
         JMenu fileMenu = new JMenu("File");
         JMenuItem logoutItem = new JMenuItem("Logout");
@@ -175,35 +225,35 @@ public class MainFrame extends JFrame {
 
         JMenu masterMenu = new JMenu("Master");
         bar.add(masterMenu);
-        masterMenu.add(menuItem("Dashboard", 0, e -> showPanel("dashboard")));
+        masterMenu.add(menuItem("Dashboard", KeyEvent.VK_F1, e -> showPanel("dashboard")));
         masterMenu.addSeparator();
-        masterMenu.add(menuItem("Customer Management", KeyEvent.VK_F1, e -> showPanel("customers")));
-        masterMenu.add(menuItem("Rate Chart", KeyEvent.VK_F2, e -> showPanel("ratechart")));
-        masterMenu.add(menuItem("Settings", 0, e -> showPanel("settings")));
+        masterMenu.add(menuItem("Customer Management", KeyEvent.VK_F2, e -> showPanel("customers")));
+        masterMenu.add(menuItem("Rate Chart", KeyEvent.VK_F3, e -> showPanel("ratechart")));
+        masterMenu.add(menuItem("Settings", KeyEvent.VK_F9, e -> showPanel("settings")));
 
         JMenu milkMenu = new JMenu("Milk Collection");
         bar.add(milkMenu);
-        milkMenu.add(menuItem("New Collection", KeyEvent.VK_N, e -> showPanel("milkentry", "new")));
+        milkMenu.add(menuItem("New Collection", KeyEvent.VK_F4, e -> showPanel("milkentry", "new")));
         milkMenu.add(menuItem("Collection History", 0, e -> showPanel("milkentry", "history")));
 
         JMenu paymentMenu = new JMenu("Payments");
         bar.add(paymentMenu);
-        paymentMenu.add(menuItem("New Payment", KeyEvent.VK_N, e -> showPanel("payments", "new")));
+        paymentMenu.add(menuItem("New Payment", KeyEvent.VK_F5, e -> showPanel("payments", "new")));
         paymentMenu.add(menuItem("Payment History", 0, e -> showPanel("payments", "history")));
-        paymentMenu.add(menuItem("Customer Ledger", 0, e -> showPanel("ledger")));
+        paymentMenu.add(menuItem("Customer Ledger", KeyEvent.VK_F6, e -> showPanel("ledger")));
 
         JMenu reportMenu = new JMenu("Reports");
         bar.add(reportMenu);
         // Only one menu item — every report type opens the same Reports screen,
         // where all report types are chosen from a single dropdown.
-        reportMenu.add(menuItem("Open Reports", KeyEvent.VK_F3, e -> showPanel("reports")));
+        reportMenu.add(menuItem("Open Reports", KeyEvent.VK_F7, e -> showPanel("reports")));
 
         JMenu dataMenu = new JMenu("Data");
         bar.add(dataMenu);
         dataMenu.add(menuItem("Import CSV", 0, e -> showPanel("data")));
         dataMenu.add(menuItem("Export CSV", 0, e -> showPanel("data")));
         dataMenu.addSeparator();
-        dataMenu.add(menuItem("Backup Database", KeyEvent.VK_B, e -> showPanel("data")));
+        dataMenu.add(menuItem("Backup Database", KeyEvent.VK_F8, e -> showPanel("data")));
         dataMenu.add(menuItem("Restore Database", 0, e -> showPanel("data")));
 
         JMenu helpMenu = new JMenu("Help");
@@ -216,13 +266,29 @@ public class MainFrame extends JFrame {
         helpMenu.addSeparator();
         helpMenu.add(aboutItem);
 
+        // White menu titles on the teal bar (applied after all menus are added).
+        for (int i = 0; i < bar.getMenuCount(); i++) {
+            JMenu m = bar.getMenu(i);
+            if (m != null) {
+                m.setForeground(Color.WHITE);
+                m.setOpaque(false);
+            }
+        }
+
         setJMenuBar(bar);
     }
 
     private JMenuItem menuItem(String text, int keyEvent, java.awt.event.ActionListener listener) {
         JMenuItem item = new JMenuItem(text);
         if (keyEvent != 0) {
-            item.setAccelerator(KeyStroke.getKeyStroke(keyEvent, 0));
+            // Function keys (F1-F12) are safe as unmodified shortcuts because
+            // they never generate text input. Letter shortcuts must be combined
+            // with the platform menu-shortcut modifier (Ctrl on Windows/Linux,
+            // Cmd on macOS) so they never fire while typing in a text field.
+            boolean isFunctionKey = keyEvent >= KeyEvent.VK_F1 && keyEvent <= KeyEvent.VK_F12;
+            int modifier = isFunctionKey ? 0
+                    : java.awt.Toolkit.getDefaultToolkit().getMenuShortcutKeyMaskEx();
+            item.setAccelerator(KeyStroke.getKeyStroke(keyEvent, modifier));
         }
         item.addActionListener(listener);
         return item;
@@ -233,11 +299,22 @@ public class MainFrame extends JFrame {
 
     private void installFunctionKeys() {
         JComponent root = (JComponent) getContentPane();
-        bindFunctionKey(root, KeyEvent.VK_F1, () -> showPanel("customers"));
-        bindFunctionKey(root, KeyEvent.VK_F2, () -> showPanel("ratechart"));
-        bindFunctionKey(root, KeyEvent.VK_F3, () -> showPanel("reports"));
+        // Full function-key navigation across every screen, matching the
+        // accelerators shown in the menu bar.
+        bindFunctionKey(root, KeyEvent.VK_F1, () -> showPanel("dashboard"));
+        bindFunctionKey(root, KeyEvent.VK_F2, () -> showPanel("customers"));
+        bindFunctionKey(root, KeyEvent.VK_F3, () -> showPanel("ratechart"));
+        bindFunctionKey(root, KeyEvent.VK_F4, () -> showPanel("milkentry", "new"));
+        bindFunctionKey(root, KeyEvent.VK_F5, () -> showPanel("payments", "new"));
+        bindFunctionKey(root, KeyEvent.VK_F6, () -> showPanel("ledger"));
+        bindFunctionKey(root, KeyEvent.VK_F7, () -> showPanel("reports"));
+        bindFunctionKey(root, KeyEvent.VK_F8, () -> showPanel("data"));
+        bindFunctionKey(root, KeyEvent.VK_F9, () -> showPanel("settings"));
         bindFunctionKey(root, KeyEvent.VK_ESCAPE, this::showDashboard);
-        bindFunctionKey(root, KeyEvent.VK_B, () -> showPanel("data"));
+        // NOTE: Only F-keys and Escape are bound here. Plain letter bindings
+        // (e.g. VK_B) must be avoided — they fire from within text fields while
+        // the user is typing and hijack navigation. Letter shortcuts now use
+        // Ctrl/Cmd via the menu accelerators in buildMenu().
     }
 
     private void bindFunctionKey(JComponent component, int key, Runnable action) {
@@ -255,8 +332,9 @@ public class MainFrame extends JFrame {
     // ---- lifecycle ----
 
     private void performLogout() {
-        int result = JOptionPane.showConfirmDialog(this,
-                "Are you sure you want to logout?", "Logout", JOptionPane.YES_NO_OPTION);
+        int result = UIUtil.confirm(this,
+                dairy.erp.util.I18n.t("Are you sure you want to logout?"),
+                dairy.erp.util.I18n.t("Logout"));
         if (result == JOptionPane.YES_OPTION) {
             dispose();
             if (onLogout != null) {
@@ -266,24 +344,16 @@ public class MainFrame extends JFrame {
     }
 
     private void confirmExit() {
-        int result = JOptionPane.showConfirmDialog(this,
-                "Are you sure you want to exit?", "Exit", JOptionPane.YES_NO_OPTION);
+        int result = UIUtil.confirm(this,
+                dairy.erp.util.I18n.t("Are you sure you want to exit?"),
+                dairy.erp.util.I18n.t("Exit"));
         if (result == JOptionPane.YES_OPTION) {
             System.exit(0);
         }
     }
 
     private void showAbout() {
-        String about =
-                "SRS Dairy ERP – Milk Collection Management System\n\n"
-                + "SRS Dairy ERP is a simple and reliable solution designed to make daily dairy\n"
-                + "operations easier. It helps manage customer details, milk collection, milk\n"
-                + "quantity, rates, payments, and reports efficiently in one place.\n\n"
-                + "Developer: Siyaram Meena\n"
-                + "Company: SRS Pvt. Ltd.\n"
-                + "Email: siyarampk@gmail.com\n"
-                + "Version: " + AppConfig.APP_VERSION;
-        JOptionPane.showMessageDialog(this, about, "About", JOptionPane.INFORMATION_MESSAGE);
+        AboutPanel.showAboutDialog(this);
     }
 }
 

@@ -10,6 +10,7 @@ import dairy.erp.service.BackupService;
 import dairy.erp.service.CustomerService;
 import dairy.erp.service.MilkCollectionService;
 import dairy.erp.service.ReportService;
+import dairy.erp.util.ButtonIcons;
 import dairy.erp.util.CSVUtil;
 import dairy.erp.util.CurrencyUtil;
 import dairy.erp.util.DateUtil;
@@ -28,9 +29,14 @@ import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JTextArea;
 import java.awt.BorderLayout;
+import java.awt.Color;
+import java.awt.Component;
+import java.awt.Dimension;
 import java.awt.FlowLayout;
+import java.awt.Font;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
+import java.awt.GridLayout;
 import java.awt.Insets;
 import java.io.File;
 import java.math.BigDecimal;
@@ -59,52 +65,170 @@ public class ImportExportPanel extends JPanel {
             "Customers", "Milk Collection", "Payments", "Customer Ledger", "Daily Report", "Monthly Report"});
     private final JTextArea logArea = new JTextArea(10, 70);
 
-    public ImportExportPanel() {
-        super(new BorderLayout(8, 8));
-        setBorder(BorderFactory.createEmptyBorder(6, 6, 6, 6));
+    public ImportExportPanel(String username) {
+        super(new BorderLayout());
+        setBorder(BorderFactory.createEmptyBorder(6, 10, 8, 10));
         logArea.setEditable(false);
-        add(buildControls(), BorderLayout.NORTH);
-        add(new JScrollPane(logArea), BorderLayout.CENTER);
+
+        // Split: tools on top (vertically arranged, centered), log as footer.
+        JPanel topWrap = new JPanel(new BorderLayout());
+        JPanel toolsPanel = buildControls(username);
+        JPanel logPanel = buildLogArea();
+        logPanel.setMinimumSize(new Dimension(200, 100));
+        topWrap.add(toolsPanel, BorderLayout.NORTH);
+        topWrap.add(logPanel, BorderLayout.SOUTH);
+        add(topWrap, BorderLayout.CENTER);
         append("Ready.");
     }
 
+    private JPanel buildLogArea() {
+        JPanel p = new JPanel(new BorderLayout());
+        p.setBorder(BorderFactory.createTitledBorder("Activity Log"));
+        logArea.setFont(new java.awt.Font(Font.SANS_SERIF, Font.PLAIN, 16));
+        logArea.setBackground(Color.WHITE);
+        logArea.setForeground(new Color(0x33, 0x33, 0x33));
+        p.add(new JScrollPane(logArea), BorderLayout.CENTER);
+        return p;
+    }
 
-    private JPanel buildControls() {
-        JPanel p = new JPanel(new GridBagLayout());
-        p.setBorder(BorderFactory.createTitledBorder("Data Tools"));
-        GridBagConstraints g = new GridBagConstraints();
-        g.insets = new Insets(6, 8, 6, 8);
-        g.anchor = GridBagConstraints.WEST;
 
-        g.gridx = 0; g.gridy = 0;
-        JButton importBtn = new JButton("Import CSV (Milk Collection)");
-        UIUtil.styleButton(importBtn);
+    private JPanel buildControls(String username) {
+        JPanel top = new JPanel(new BorderLayout(0, 6));
+
+        // Row 1: logo on the left, [ User ] [ Date ] on the right.
+        JPanel headerRow = new JPanel(new BorderLayout());
+        headerRow.add(UIUtil.header("Import / Export / Backup"), BorderLayout.WEST);
+        JPanel info = new JPanel(new FlowLayout(FlowLayout.RIGHT, 14, 6));
+        JLabel userLbl = new JLabel("User: " + username);
+        JLabel dateLbl = new JLabel("Date: " + DateUtil.toDisplay(DateUtil.today()));
+        userLbl.setFont(userLbl.getFont().deriveFont(Font.BOLD, 15f));
+        dateLbl.setFont(dateLbl.getFont().deriveFont(Font.BOLD, 15f));
+        userLbl.setForeground(UIUtil.BRAND);
+        dateLbl.setForeground(UIUtil.BRAND);
+        info.add(userLbl);
+        info.add(dateLbl);
+        headerRow.add(info, BorderLayout.EAST);
+        top.add(headerRow, BorderLayout.NORTH);
+
+        // Middle: title row.
+        JPanel titleRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 2));
+        JLabel title = new JLabel("DATA TOOLS");
+        title.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 22));
+        title.setForeground(UIUtil.BRAND);
+        titleRow.add(title);
+        top.add(titleRow, BorderLayout.CENTER);
+
+        // Two balanced panels: Data Movement (Import + Export) on the left,
+        // Database Maintenance (Backup + Restore) on the right.
+        JPanel body = new JPanel(new GridLayout(1, 2, 18, 0));
+        body.setBorder(BorderFactory.createEmptyBorder(4, 8, 4, 8));
+
+        JPanel left = new JPanel(new BorderLayout(0, 14));
+        left.setBorder(BorderFactory.createTitledBorder("Data Movement"));
+        left.setBackground(Color.WHITE);
+        JPanel leftStack = new JPanel();
+        leftStack.setLayout(new javax.swing.BoxLayout(leftStack, javax.swing.BoxLayout.Y_AXIS));
+        leftStack.setBackground(Color.WHITE);
+        leftStack.add(buildImportCard());
+        leftStack.add(javax.swing.Box.createVerticalStrut(14));
+        leftStack.add(buildExportCard());
+        left.add(leftStack, BorderLayout.CENTER);
+        body.add(left);
+
+        JPanel right = new JPanel(new BorderLayout(0, 14));
+        right.setBorder(BorderFactory.createTitledBorder("Database Maintenance"));
+        right.setBackground(Color.WHITE);
+        JPanel rightStack = new JPanel();
+        rightStack.setLayout(new javax.swing.BoxLayout(rightStack, javax.swing.BoxLayout.Y_AXIS));
+        rightStack.setBackground(Color.WHITE);
+        rightStack.add(buildBackupCard());
+        rightStack.add(javax.swing.Box.createVerticalStrut(14));
+        rightStack.add(buildRestoreCard());
+        right.add(rightStack, BorderLayout.CENTER);
+        body.add(right);
+
+        top.add(body, BorderLayout.SOUTH);
+        return top;
+    }
+
+    private JPanel buildImportCard() {
+        // Compact card like the reference: coloured title row, then one
+        // full-width icon button.
+        JPanel importCard = toolCard("IMPORT", new Color(0x45, 0xA2, 0xB8)); // teal
+        JButton importBtn = new JButton("Import CSV", ButtonIcons.of("Upload", Color.WHITE));
+        UIUtil.styleSmallButton(importBtn, new Color(0x45, 0xA2, 0xB8)); // teal
+        importBtn.setPreferredSize(new Dimension(200, 40));
         importBtn.addActionListener(e -> importCsv());
-        p.add(importBtn, g);
+        importCard.add(importBtn, BorderLayout.SOUTH); // stretches full card width
+        return importCard;
+    }
 
-        g.gridx = 1; g.gridy = 0;
-        p.add(new JLabel("Export:"), g);
-        g.gridx = 2;
-        p.add(exportTypeBox, g);
-        g.gridx = 3;
-        JButton exportBtn = new JButton("Export CSV");
-        UIUtil.styleButton(exportBtn);
+    private JPanel buildExportCard() {
+        JPanel exportCard = toolCard("EXPORT", new Color(0x2E, 0x7D, 0x32)); // green
+        // BorderLayout guarantees the Export CSV button is always visible:
+        // the dropdown fills the remaining space and the button pins right.
+        JPanel exportRow = new JPanel(new BorderLayout(8, 0));
+        exportRow.setOpaque(false);
+        exportTypeBox.setPreferredSize(new Dimension(120, 38));
+        exportTypeBox.setMaximumSize(new Dimension(Integer.MAX_VALUE, 38));
+        JButton exportBtn = new JButton("Export CSV", ButtonIcons.of("Upload", Color.WHITE));
+        UIUtil.styleSmallButton(exportBtn, new Color(0x2E, 0x7D, 0x32)); // green
+        exportBtn.setPreferredSize(new Dimension(180, 40));
         exportBtn.addActionListener(e -> exportCsv());
-        p.add(exportBtn, g);
+        exportRow.add(exportTypeBox, BorderLayout.CENTER);
+        exportRow.add(exportBtn, BorderLayout.EAST);
+        exportCard.add(exportRow, BorderLayout.SOUTH);
+        return exportCard;
+    }
 
-        g.gridx = 4; g.gridy = 0;
-        JButton backupBtn = new JButton("Backup Database");
-        UIUtil.styleButton(backupBtn);
-        backupBtn.addActionListener(e -> backup());        p.add(backupBtn, g);
-        g.gridx = 5;
-        JButton restoreBtn = new JButton("Restore Database");
-        UIUtil.styleButton(restoreBtn);
+    private JPanel buildBackupCard() {
+        JPanel backupCard = toolCard("BACKUP", new Color(0xEF, 0x6C, 0x00)); // orange
+        JButton backupBtn = new JButton("Backup Database", ButtonIcons.of("Cloud", Color.WHITE));
+        UIUtil.styleSmallButton(backupBtn, new Color(0xEF, 0x6C, 0x00)); // orange
+        backupBtn.setPreferredSize(new Dimension(200, 40));
+        backupBtn.addActionListener(e -> backup());
+        backupCard.add(backupBtn, BorderLayout.SOUTH); // stretches full card width
+        return backupCard;
+    }
+
+    private JPanel buildRestoreCard() {
+        JPanel restoreCard = toolCard("RESTORE", new Color(0x60, 0x7D, 0x8B)); // slate
+        JButton restoreBtn = new JButton("Restore Database", ButtonIcons.of("Refresh", Color.WHITE));
+        UIUtil.styleSmallButton(restoreBtn, new Color(0x60, 0x7D, 0x8B)); // slate
+        restoreBtn.setPreferredSize(new Dimension(200, 40));
         restoreBtn.addActionListener(e -> restore());
-        p.add(restoreBtn, g);
-        JPanel wrap = new JPanel(new BorderLayout(0, 4));
-        wrap.add(UIUtil.header("Import / Export / Backup"), BorderLayout.NORTH);
-        wrap.add(p, BorderLayout.CENTER);
-        return wrap;
+        restoreCard.add(restoreBtn, BorderLayout.SOUTH); // stretches full card width
+        return restoreCard;
+    }
+
+    /**
+     * Builds one tool card in the reference style: accent strip + coloured
+     * title on top, action button (added by the caller) below. Cards stretch
+     * to the full width of their column and stay compact — no description
+     * text, as in the screenshot.
+     */
+    private JPanel toolCard(String title, Color accent) {
+        JPanel card = new JPanel(new BorderLayout(8, 8));
+        card.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(new Color(0xC9, 0xD6, 0xDE)),
+                BorderFactory.createEmptyBorder(10, 10, 10, 10)));
+        card.setBackground(Color.WHITE);
+        card.setAlignmentX(Component.LEFT_ALIGNMENT);
+        card.setMaximumSize(new Dimension(Integer.MAX_VALUE, 130));
+
+        JPanel header = new JPanel(new BorderLayout(8, 0));
+        header.setOpaque(false);
+        JPanel accentStrip = new JPanel();
+        accentStrip.setBackground(accent);
+        accentStrip.setPreferredSize(new Dimension(6, 26));
+        header.add(accentStrip, BorderLayout.WEST);
+        JLabel titleLbl = new JLabel(title);
+        titleLbl.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 17));
+        titleLbl.setForeground(accent);
+        header.add(titleLbl, BorderLayout.CENTER);
+        card.add(header, BorderLayout.NORTH);
+
+        return card;
     }
 
     private void append(String msg) {
@@ -130,13 +254,13 @@ public class ImportExportPanel extends JPanel {
         try {
             List<List<String>> rows = CSVUtil.read(file.toPath());
             if (rows.size() < 2) {
-                JOptionPane.showMessageDialog(this, "CSV has no data rows.", "Import",
+                UIUtil.showMessage(this, "CSV has no data rows.", "Import",
                         JOptionPane.WARNING_MESSAGE);
                 return;
             }
             List<String> header = rows.get(0);
             if (!isHeader(header)) {
-                JOptionPane.showMessageDialog(this,
+                UIUtil.showMessage(this,
                         "Header must be: Date,CustomerCode,MilkType,Shift,Quantity,FAT,SNF",
                         "Import", JOptionPane.WARNING_MESSAGE);
                 return;
@@ -195,12 +319,12 @@ public class ImportExportPanel extends JPanel {
                     sb.append("  ").append(e).append('\n');
                 }
                 append(sb.toString());
-                JOptionPane.showMessageDialog(this, sb.toString(), "Import Validation",
+                UIUtil.showMessage(this, sb.toString(), "Import Validation",
                         JOptionPane.WARNING_MESSAGE);
                 return;
             }
             if (valid.isEmpty()) {
-                JOptionPane.showMessageDialog(this, "No valid rows to import.", "Import",
+                UIUtil.showMessage(this, "No valid rows to import.", "Import",
                         JOptionPane.INFORMATION_MESSAGE);
                 return;
             }
@@ -211,12 +335,12 @@ public class ImportExportPanel extends JPanel {
                 sb.append("  ").append(e).append('\n');
             }
             append(sb.toString());
-            JOptionPane.showMessageDialog(this, sb.toString(), "Import Result",
+            UIUtil.showMessage(this, sb.toString(), "Import Result",
                     skipErrors.isEmpty() ? JOptionPane.INFORMATION_MESSAGE : JOptionPane.WARNING_MESSAGE);
             LOG.info("CSV import completed. Valid=" + valid.size() + " skipped=" + skipErrors.size());
         } catch (Exception ex) {
             LOG.severe("CSV import failed: " + ex.getMessage());
-            JOptionPane.showMessageDialog(this, "Import failed: " + ex.getMessage(),
+            UIUtil.showMessage(this, "Import failed: " + ex.getMessage(),
                     "Import", JOptionPane.ERROR_MESSAGE);
         }
     }
@@ -242,22 +366,22 @@ public class ImportExportPanel extends JPanel {
                 default: exportMonthlyReport(path); break;
             }
             append("Exported " + type + " to " + path);
-            JOptionPane.showMessageDialog(this, "Exported to " + path, "Export",
+            UIUtil.showMessage(this, "Exported to " + path, "Export",
                     JOptionPane.INFORMATION_MESSAGE);
             LOG.info("Exported " + type + " to " + path);
         } catch (Exception ex) {
             LOG.severe("Export failed: " + ex.getMessage());
-            JOptionPane.showMessageDialog(this, "Export failed: " + ex.getMessage(),
+            UIUtil.showMessage(this, "Export failed: " + ex.getMessage(),
                     "Export", JOptionPane.ERROR_MESSAGE);
         }
     }
 
     private void exportCustomers(Path path) throws Exception {
         List<List<String>> rows = new ArrayList<>();
-        rows.add(listOf("Customer Code", "Customer Name", "Father Name", "Mobile", "Address",
+        rows.add(listOf("Customer Code", "Customer Name", "Mobile", "Address",
                 "Village", "Milk Type", "Customer Type", "Status", "Opening Balance", "Reg. Date"));
         for (Customer c : customerDAO.findAll()) {
-            rows.add(listOf(c.getCustomerCode(), c.getCustomerName(), c.getFatherName(),
+            rows.add(listOf(c.getCustomerCode(), c.getCustomerName(),
                     c.getMobile(), c.getAddress(), c.getVillage(), c.getMilkType(),
                     c.getCustomerType(), c.getStatus(),
                     c.getOpeningBalance() == null ? "" : c.getOpeningBalance().toPlainString(),
@@ -342,12 +466,12 @@ public class ImportExportPanel extends JPanel {
         try {
             File file = backupService.backup();
             append("Backup created: " + file.getAbsolutePath());
-            JOptionPane.showMessageDialog(this, "Database backed up to:\n" + file.getAbsolutePath(),
+            UIUtil.showMessage(this, "Database backed up to:\n" + file.getAbsolutePath(),
                     "Backup", JOptionPane.INFORMATION_MESSAGE);
             LOG.info("Backup completed: " + file.getAbsolutePath());
         } catch (Exception ex) {
             LOG.severe("Backup failed: " + ex.getMessage());
-            JOptionPane.showMessageDialog(this, "Backup failed: " + ex.getMessage(),
+            UIUtil.showMessage(this, "Backup failed: " + ex.getMessage(),
                     "Backup", JOptionPane.ERROR_MESSAGE);
         }
     }
@@ -359,23 +483,23 @@ public class ImportExportPanel extends JPanel {
             return;
         }
         File file = chooser.getSelectedFile();
-        int confirm = JOptionPane.showConfirmDialog(this,
+        int confirm = UIUtil.confirm(this,
                 "Are you sure you want to restore the database?\n"
                         + "Current data may be replaced.\n\n" + file.getName(),
-                "Restore Database", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
+                "Restore Database");
         if (confirm != JOptionPane.YES_OPTION) {
             return;
         }
         try {
             backupService.restore(file);
             append("Database restored from " + file.getName());
-            JOptionPane.showMessageDialog(this,
+            UIUtil.showMessage(this,
                     "Database restored successfully.\nPlease restart the application.",
                     "Restore", JOptionPane.INFORMATION_MESSAGE);
             LOG.info("Database restored from " + file.getAbsolutePath());
         } catch (Exception ex) {
             LOG.severe("Restore failed: " + ex.getMessage());
-            JOptionPane.showMessageDialog(this, "Restore failed: " + ex.getMessage(),
+            UIUtil.showMessage(this, "Restore failed: " + ex.getMessage(),
                     "Restore", JOptionPane.ERROR_MESSAGE);
         }
     }

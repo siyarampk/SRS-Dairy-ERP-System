@@ -94,6 +94,9 @@ public class CalendarDialog extends JDialog {
         this.monthLabel   = new JLabel("", SwingConstants.CENTER);
         buildUi();
         render();
+        // Bilingual support: translate this dialog into the chosen language.
+        setTitle(dairy.erp.util.I18n.t("Select Date"));
+        dairy.erp.util.I18n.apply(getContentPane());
         int h = HEADER + FOOTER + (CELL + 2) * 6 + 14;
         setSize(332, h);
         setLocationRelativeTo(owner);

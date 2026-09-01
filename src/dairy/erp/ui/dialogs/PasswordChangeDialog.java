@@ -1,10 +1,12 @@
 package dairy.erp.ui.dialogs;
 
 import dairy.erp.service.AuthenticationService;
+import dairy.erp.util.ButtonIcons;
 import dairy.erp.util.UIUtil;
 
 import javax.swing.BorderFactory;
 import javax.swing.JButton;
+import javax.swing.JComponent;
 import javax.swing.JDialog;
 import javax.swing.JLabel;
 import javax.swing.JOptionPane;
@@ -36,6 +38,9 @@ public class PasswordChangeDialog extends JDialog {
         this.username = username;
         setDefaultCloseOperation(DISPOSE_ON_CLOSE);
         buildUi();
+        // Bilingual support: translate this dialog into the chosen language.
+        setTitle(dairy.erp.util.I18n.t("Change Password"));
+        dairy.erp.util.I18n.apply(getContentPane());
         pack();
         setLocationRelativeTo(owner);
         setResizable(false);
@@ -67,17 +72,19 @@ public class PasswordChangeDialog extends JDialog {
                 BorderFactory.createLineBorder(UIUtil.BRAND),
                 BorderFactory.createCompoundBorder(
                         BorderFactory.createEmptyBorder(4, 8, 8, 8), tb)));
-        addVerticalField(fields, 0, "Current Password:", currentField);
-        addVerticalField(fields, 1, "New Password:", newField);
-        addVerticalField(fields, 2, "Confirm New Password:", confirmField);
+        // Each password field gets a trailing eye toggle to show/hide its text.
+        addVerticalField(fields, 0, "Current Password:", UIUtil.passwordWithEye(currentField));
+        addVerticalField(fields, 1, "New Password:", UIUtil.passwordWithEye(newField));
+        addVerticalField(fields, 2, "Confirm New Password:", UIUtil.passwordWithEye(confirmField));
         UIUtil.styleComponent(currentField, 18);
         UIUtil.styleComponent(newField, 18);
         UIUtil.styleComponent(confirmField, 18);
 
-        // Buttons in the app-standard colours: green Save, grey Cancel.
-        JButton save = new JButton("Save");
+        // Buttons in the app-standard colours with matching vector icons:
+        // green Save (floppy icon), grey Cancel (cross icon).
+        JButton save = new JButton("Save", ButtonIcons.of("Save", Color.WHITE));
         UIUtil.styleSmallButton(save, new Color(0x2E7D32)); // green
-        JButton cancel = new JButton("Cancel");
+        JButton cancel = new JButton("Cancel", ButtonIcons.of("Cross", Color.WHITE));
         UIUtil.styleSmallButton(cancel, new Color(0x607D8B)); // grey
         JPanel buttons = new JPanel(new FlowLayout(FlowLayout.CENTER, 12, 4));
         buttons.add(save);
@@ -95,7 +102,7 @@ public class PasswordChangeDialog extends JDialog {
     }
 
     /** One label stacked directly above its password field, full width. */
-    private void addVerticalField(JPanel panel, int row, String label, JPasswordField field) {
+    private void addVerticalField(JPanel panel, int row, String label, JComponent field) {
         GridBagConstraints g = new GridBagConstraints();
         g.anchor = GridBagConstraints.WEST;
         g.gridx = 0;
@@ -117,11 +124,11 @@ public class PasswordChangeDialog extends JDialog {
         String confirm = new String(confirmField.getPassword());
         String result = authenticationService.changePassword(username, current, next, confirm);
         if (result.isEmpty()) {
-            JOptionPane.showMessageDialog(this, "Password changed successfully.",
+            UIUtil.showMessage(this, "Password changed successfully.",
                     "Change Password", JOptionPane.INFORMATION_MESSAGE);
             dispose();
         } else {
-            JOptionPane.showMessageDialog(this, result,
+            UIUtil.showMessage(this, result,
                     "Change Password", JOptionPane.WARNING_MESSAGE);
         }
     }

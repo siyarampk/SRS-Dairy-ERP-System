@@ -2,11 +2,15 @@ package dairy.erp.ui;
 
 import dairy.erp.service.SettingsService;
 import dairy.erp.ui.dialogs.PasswordChangeDialog;
+import dairy.erp.util.AppBus;
+import dairy.erp.util.ButtonIcons;
+import dairy.erp.util.Theme;
 import dairy.erp.util.UIUtil;
 
 import javax.swing.BorderFactory;
 import javax.swing.JButton;
 import javax.swing.JComboBox;
+import javax.swing.JComponent;
 import javax.swing.JFrame;
 import javax.swing.JLabel;
 import javax.swing.JOptionPane;
@@ -14,244 +18,282 @@ import javax.swing.JPanel;
 import javax.swing.JTextField;
 import java.awt.BorderLayout;
 import java.awt.Color;
-import java.awt.Dimension;
-import java.awt.FlowLayout;
 import java.awt.Font;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.Insets;
-import java.awt.Toolkit;
+import java.awt.event.FocusAdapter;
+import java.awt.event.FocusEvent;
 import java.util.Map;
 
 /**
- * Settings screen for dairy information, application behaviour, FAT/SNF
- * validation bounds and password change.
+ * Settings screen rebuilt to the approved design: a logo header, three white
+ * cards side by side — Dairy Information, Application Settings and FAT / SNF
+ * Settings — each with a bold slate heading above it and light tinted fields,
+ * plus a centred Save Settings / Change Password action row underneath.
+ * <p>
+ * Behaviour is unchanged: every value loads from and saves through
+ * {@link SettingsService}, the dairy name is broadcast on save, the selected
+ * theme applies live, and Change Password opens the existing dialog.
  */
 public class SettingsPanel extends JPanel {
 
-    private static final Font LABEL_FONT = new Font(Font.SANS_SERIF, Font.BOLD, 18);
-    private static final Color SECTION_TITLE = new Color(0x1a, 0x5f, 0x7a);
+    private static final Font LABEL_FONT = new Font(Font.SANS_SERIF, Font.BOLD, 15);
+    private static final Font FIELD_FONT = new Font(Font.SANS_SERIF, Font.PLAIN, 16);
+    private static final Color TEXT_DARK = new Color(0x1F, 0x2D, 0x33);
+    private static final Color HEADING = new Color(0x2E, 0x40, 0x53);
+    private static final Color FIELD_BG = new Color(0xF6, 0xF9, 0xFB);
+    private static final Color FIELD_BORDER = new Color(0xC9, 0xD3, 0xDA);
+    private static final Color CARD_BORDER = new Color(0xD0, 0xD7, 0xDE);
+    private static final Color HINT_GREY = new Color(0x9A, 0xA7, 0xB3);
+    private static final Color ICON_GREY = new Color(0x5F, 0x6B, 0x76);
+    private static final Color SAVE_TEAL = new Color(0x1F, 0x6E, 0x5B);
+    private static final Color PASS_BLUE = new Color(0x64, 0xB5, 0xF6);
+    private static final String GST_HINT = "GST Number (preservdor)";
 
     private final SettingsService settingsService = new SettingsService();
     private final String username;
 
     // Dairy information
-    private final JTextField dairyName = new JTextField(20);
-    private final JTextField dairyOwner = new JTextField(20);
-    private final JTextField dairyAddress = new JTextField(30);
-    private final JTextField dairyMobile = new JTextField(15);
-    private final JTextField dairyEmail = new JTextField(20);
-    private final JTextField dairyGst = new JTextField(15);
+    private final JTextField dairyName = new JTextField();
+    private final JTextField dairyOwner = new JTextField();
+    private final JTextField dairyAddress = new JTextField();
+    private final JTextField dairyMobile = new JTextField();
+    private final JTextField dairyEmail = new JTextField();
+    private final JTextField dairyGst = new JTextField();
 
     // Application settings
-    private final JTextField dateFormat = new JTextField(10);
-    private final JTextField currencySymbol = new JTextField(6);
-    private final JTextField decimalPlaces = new JTextField(4);
+    private final JTextField dateFormat = new JTextField();
+    private final JTextField currencySymbol = new JTextField();
+    private final JTextField decimalPlaces = new JTextField();
     private final JComboBox<String> defaultShift = new JComboBox<>(new String[]{"Morning", "Evening"});
     private final JComboBox<String> defaultMilkType = new JComboBox<>(new String[]{"Cow", "Buffalo", "Mix"});
     private final JComboBox<String> manualRateOverride = new JComboBox<>(new String[]{"false", "true"});
+    private final JComboBox<Theme> themeSelector = new JComboBox<>(Theme.ALL);
 
     // FAT/SNF bounds
-    private final JTextField fatMin = new JTextField(6);
-    private final JTextField fatMax = new JTextField(6);
-    private final JTextField snfMin = new JTextField(6);
-    private final JTextField snfMax = new JTextField(6);
-    private final JTextField fatMinCow = new JTextField(6);
-    private final JTextField fatMaxCow = new JTextField(6);
-    private final JTextField fatMinBuf = new JTextField(6);
-    private final JTextField fatMaxBuf = new JTextField(6);
-    private final JTextField fatMinMix = new JTextField(6);
-    private final JTextField fatMaxMix = new JTextField(6);
+    private final JTextField fatMin = new JTextField();
+    private final JTextField fatMax = new JTextField();
+    private final JTextField snfMin = new JTextField();
+    private final JTextField snfMax = new JTextField();
+    private final JTextField fatMinCow = new JTextField();
+    private final JTextField fatMaxCow = new JTextField();
+    private final JTextField fatMinBuf = new JTextField();
+    private final JTextField fatMaxBuf = new JTextField();
+    private final JTextField fatMinMix = new JTextField();
+    private final JTextField fatMaxMix = new JTextField();
 
     public SettingsPanel(String username) {
-        super(new BorderLayout(8, 8));
+        super(new BorderLayout(0, 8));
         this.username = username;
-        setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
-        styleInputs();
-        add(buildTop(), BorderLayout.CENTER);
+        setBorder(BorderFactory.createEmptyBorder(10, 14, 10, 14));
+
+        add(UIUtil.header("Settings"), BorderLayout.NORTH);
+
+        JPanel center = new JPanel(new BorderLayout(0, 6));
+        center.setOpaque(false);
+        center.add(buildCards(), BorderLayout.NORTH);
+        // The action buttons sit directly under the cards, near the top of
+        // the space left below them (as in the design).
+        JPanel below = new JPanel(new BorderLayout());
+        below.setOpaque(false);
+        below.add(buildButtonArea(), BorderLayout.NORTH);
+        center.add(below, BorderLayout.CENTER);
+        add(center, BorderLayout.CENTER);
+
         loadSettings();
     }
 
-    /** Applies the same 18px field styling used on every other screen. */
-    private void styleInputs() {
-        UIUtil.styleField(dairyName, 20);
-        UIUtil.styleField(dairyOwner, 20);
-        UIUtil.styleField(dairyAddress, 24);
-        UIUtil.styleField(dairyMobile, 15);
-        UIUtil.styleField(dairyEmail, 20);
-        UIUtil.styleField(dairyGst, 15);
-        UIUtil.styleField(dateFormat, 10);
-        UIUtil.styleField(currencySymbol, 6);
-        UIUtil.styleField(decimalPlaces, 4);
-        UIUtil.styleField(fatMin, 6);
-        UIUtil.styleField(fatMax, 6);
-        UIUtil.styleField(snfMin, 6);
-        UIUtil.styleField(snfMax, 6);
-        UIUtil.styleField(fatMinCow, 6);
-        UIUtil.styleField(fatMaxCow, 6);
-        UIUtil.styleField(fatMinBuf, 6);
-        UIUtil.styleField(fatMaxBuf, 6);
-        UIUtil.styleField(fatMinMix, 6);
-        UIUtil.styleField(fatMaxMix, 6);
-        UIUtil.styleComponent(defaultShift, 18);
-        UIUtil.styleComponent(defaultMilkType, 18);
-        UIUtil.styleComponent(manualRateOverride, 18);
-    }
-
-    private JPanel buildTop() {
-        JPanel wrap = new JPanel(new BorderLayout(8, 6));
-        wrap.add(UIUtil.header("Application Settings"), BorderLayout.NORTH);
-
-        // Top half of the screen holds the three section panels;
-        // the remaining bottom area is a dedicated button area.
-        int halfHeight = Toolkit.getDefaultToolkit().getScreenSize().height / 2 - 40;
-
-        JPanel sections = buildContent();
-        Dimension preferred = sections.getPreferredSize();
-        sections.setPreferredSize(new Dimension(preferred.width, halfHeight));
-
-        // vgap=12 keeps the three panels 12px above the button area
-        // (6px original gap + 6px extra top padding for the buttons).
-        JPanel center = new JPanel(new BorderLayout(8, 12));
-        center.add(sections, BorderLayout.NORTH);
-        center.add(buildButtonArea(), BorderLayout.CENTER);
-
-        wrap.add(center, BorderLayout.CENTER);
-        return wrap;
-    }
-
-
-    private JPanel buildContent() {
-        JPanel content = new JPanel(new GridBagLayout());
+    /** The three white section cards laid out in one equal-width row. */
+    private JPanel buildCards() {
+        JPanel cards = new JPanel(new GridBagLayout());
+        cards.setOpaque(false);
         GridBagConstraints g = new GridBagConstraints();
-        g.insets = new Insets(4, 6, 4, 6);
-        //g.insets = new Insets(25, 10, 10, 10); 
-        g.anchor = GridBagConstraints.WEST;
-        g.fill = GridBagConstraints.VERTICAL;
-
-        JPanel dairy = section("Dairy Information");
-        addField(dairy, 0, "Dairy Name:", dairyName);
-        addField(dairy, 1, "Owner Name:", dairyOwner);
-        addField(dairy, 2, "Address:", dairyAddress);
-        addField(dairy, 3, "Mobile:", dairyMobile);
-        addField(dairy, 4, "Email:", dairyEmail);
-        addField(dairy, 5, "GST Number:", dairyGst);
-        addVerticalFiller(dairy, 12, 1);
-
-        JPanel app = section("Application Settings");
-        addField(app, 0, "Date Format:", dateFormat);
-        addField(app, 1, "Currency Symbol:", currencySymbol);
-        addField(app, 2, "Decimal Places:", decimalPlaces);
-        addFieldCombo(app, 3, "Default Shift:", defaultShift);
-        addFieldCombo(app, 4, "Default Milk Type:", defaultMilkType);
-        addFieldCombo(app, 5, "Manual Rate Override:", manualRateOverride);
-        addVerticalFiller(app, 12, 1);
-
-        JPanel fatSnf = section("FAT / SNF Settings");
-        addFieldAt(fatSnf, 0, 0, "Minimum FAT:", fatMin);
-        addFieldAt(fatSnf, 0, 1, "Maximum FAT:", fatMax);
-        addFieldAt(fatSnf, 1, 0, "Minimum SNF:", snfMin);
-        addFieldAt(fatSnf, 1, 1, "Maximum SNF:", snfMax);
-        addFieldAt(fatSnf, 2, 0, "Cow FAT Min:", fatMinCow);
-        addFieldAt(fatSnf, 2, 1, "Cow FAT Max:", fatMaxCow);
-        addFieldAt(fatSnf, 3, 0, "Buffalo FAT Min:", fatMinBuf);
-        addFieldAt(fatSnf, 3, 1, "Buffalo FAT Max:", fatMaxBuf);
-        addFieldAt(fatSnf, 4, 0, "Mix FAT Min:", fatMinMix);
-        addFieldAt(fatSnf, 4, 1, "Mix FAT Max:", fatMaxMix);
-        addVerticalFiller(fatSnf, 10, 2);
-
-        // Three equal panels side by side: each section gets exactly one
-        // third of the width and the full height, so the areas are equal.
-        g.gridx = 0; g.gridy = 0; g.gridwidth = 1;
-        g.anchor = GridBagConstraints.NORTHWEST;
-        g.weightx = 1.0; g.weighty = 1.0; g.fill = GridBagConstraints.BOTH;
-        content.add(dairy, g);
-        g.gridx = 1;
-        content.add(app, g);
-        g.gridx = 2;
-        content.add(fatSnf, g);
-        return content;
-    }
-
-    /** Invisible filler that keeps a section's rows top-aligned when the section grows. */
-    private void addVerticalFiller(JPanel section, int row, int gridwidth) {
-        GridBagConstraints g = new GridBagConstraints();
-        g.gridx = 0; g.gridy = row; g.gridwidth = gridwidth;
-        g.weightx = 1.0; g.weighty = 1.0;
+        g.insets = new Insets(2, 6, 2, 6);
         g.fill = GridBagConstraints.BOTH;
-        section.add(new JLabel(" "), g);
+        g.weightx = 1.0;
+        g.weighty = 1.0;
+        g.gridx = 0;
+        cards.add(dairyCard(), g);
+        g.gridx = 1;
+        cards.add(appCard(), g);
+        g.gridx = 2;
+        cards.add(fatSnfCard(), g);
+        return cards;
     }
 
-    private JPanel section(String title) {
-        JPanel p = new JPanel(new GridBagLayout());
-        javax.swing.border.TitledBorder tb = BorderFactory.createTitledBorder(title);
-        tb.setTitleFont(new Font(Font.SANS_SERIF, Font.BOLD, 18));
-        tb.setTitleColor(SECTION_TITLE);
-        p.setBorder(tb);
-        return p;
+    private JComponent dairyCard() {
+        JPanel rows = new JPanel(new GridBagLayout());
+        rows.setOpaque(false);
+        GridBagConstraints g = new GridBagConstraints();
+        int row = 0;
+        row = addFieldRow(rows, g, row, "Dairy Name:", styledField(dairyName));
+        row = addFieldRow(rows, g, row, "Owner Name:", styledField(dairyOwner));
+        row = addFieldRow(rows, g, row, "Address:", fieldWithIcon(dairyAddress, "MapPin"));
+        row = addFieldRow(rows, g, row, "Mobile:", fieldWithIcon(dairyMobile, "Phone"));
+        row = addFieldRow(rows, g, row, "Email:", fieldWithIcon(dairyEmail, "Envelope"));
+        addFieldRow(rows, g, row, "GST Number:", gstField());
+        return card("Dairy Information", rows);
     }
 
-    private JLabel styledLabel(String text) {
+    private JComponent appCard() {
+        JPanel rows = new JPanel(new GridBagLayout());
+        rows.setOpaque(false);
+        GridBagConstraints g = new GridBagConstraints();
+        int row = 0;
+        row = addFieldRow(rows, g, row, "Date Format:", styledField(dateFormat));
+        row = addFieldRow(rows, g, row, "Currency Symbol:", styledField(currencySymbol));
+        row = addFieldRow(rows, g, row, "Decimal Places:", styledField(decimalPlaces));
+        row = addFieldRow(rows, g, row, "Default Shift:", styledCombo(defaultShift));
+        row = addFieldRow(rows, g, row, "Default Milk Type:", styledCombo(defaultMilkType));
+        row = addFieldRow(rows, g, row, "Manual Rate Override:", styledCombo(manualRateOverride));
+        addFieldRow(rows, g, row, "App Theme:", styledCombo(themeSelector));
+        return card("Application Settings", rows);
+    }
+
+    private JComponent fatSnfCard() {
+        JPanel rows = new JPanel(new GridBagLayout());
+        rows.setOpaque(false);
+        GridBagConstraints g = new GridBagConstraints();
+        int row = 0;
+        row = addFieldRowAt(rows, g, row, 0, "Minimum FAT:", styledField(fatMin));
+        addFieldRowAt(rows, g, row - 1, 1, "Maximum FAT:", styledField(fatMax));
+        row = addFieldRowAt(rows, g, row, 0, "Minimum SNF:", styledField(snfMin));
+        addFieldRowAt(rows, g, row - 1, 1, "Maximum SNF:", styledField(snfMax));
+        row = addFieldRowAt(rows, g, row, 0, "Cow FAT Min:", styledField(fatMinCow));
+        addFieldRowAt(rows, g, row - 1, 1, "Cow FAT Max:", styledField(fatMaxCow));
+        row = addFieldRowAt(rows, g, row, 0, "Buffalo FAT Min:", styledField(fatMinBuf));
+        addFieldRowAt(rows, g, row - 1, 1, "Buffalo FAT Max:", styledField(fatMaxBuf));
+        row = addFieldRowAt(rows, g, row, 0, "Mix FAT Min:", styledField(fatMinMix));
+        addFieldRowAt(rows, g, row - 1, 1, "Mix FAT Max:", styledField(fatMaxMix));
+        return card("FAT / SNF Settings", rows);
+    }
+
+    /** A white card with a rounded light border and its heading above it. */
+    private JPanel card(String title, JComponent content) {
+        JPanel outer = new JPanel(new BorderLayout(0, 4));
+        outer.setOpaque(false);
+        JLabel heading = new JLabel(title);
+        heading.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 17));
+        heading.setForeground(HEADING);
+        heading.setBorder(BorderFactory.createEmptyBorder(2, 4, 0, 4));
+        outer.add(heading, BorderLayout.NORTH);
+        JPanel body = new JPanel(new BorderLayout());
+        body.setBackground(Color.WHITE);
+        body.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(CARD_BORDER, 1, true),
+                BorderFactory.createEmptyBorder(12, 12, 12, 12)));
+        body.add(content, BorderLayout.NORTH);
+        outer.add(body, BorderLayout.CENTER);
+        return outer;
+    }
+
+    /** Label-above-field row in the single-column cards. */
+    private int addFieldRow(JPanel panel, GridBagConstraints g, int row,
+            String label, JComponent field) {
+        g.insets = new Insets(3, 2, 1, 8);
+        g.gridx = 0;
+        g.gridy = row * 2;
+        g.weightx = 1.0;
+        g.fill = GridBagConstraints.HORIZONTAL;
+        panel.add(fieldLabel(label), g);
+        g.insets = new Insets(1, 2, 5, 8);
+        g.gridy = row * 2 + 1;
+        panel.add(field, g);
+        return row + 1;
+    }
+
+    /** Label-above-field row in the two-column FAT / SNF card. */
+    private int addFieldRowAt(JPanel panel, GridBagConstraints g, int row, int col,
+            String label, JComponent field) {
+        g.insets = new Insets(3, 2, 1, 8);
+        g.gridx = col;
+        g.gridy = row * 2;
+        g.weightx = 1.0;
+        g.fill = GridBagConstraints.HORIZONTAL;
+        panel.add(fieldLabel(label), g);
+        g.insets = new Insets(1, 2, 5, 8);
+        g.gridy = row * 2 + 1;
+        panel.add(field, g);
+        return row + 1;
+    }
+
+    private JLabel fieldLabel(String text) {
         JLabel l = new JLabel(text);
         l.setFont(LABEL_FONT);
+        l.setForeground(TEXT_DARK);
         return l;
     }
 
-    /**
-     * Vertical mode: the label sits directly ABOVE its field (one label per
-     * field row pair), and the field stretches to the full section width.
-     */
-    private void addField(JPanel panel, int row, String label, javax.swing.JComponent field) {
-        GridBagConstraints g = new GridBagConstraints();
-        g.insets = new Insets(4, 6, 4, 6);
-        g.anchor = GridBagConstraints.WEST;
-        g.gridx = 0; g.gridy = row * 2; g.gridwidth = 1;
-        g.weightx = 1.0; g.fill = GridBagConstraints.HORIZONTAL;
-        panel.add(styledLabel(label), g);
-        g.gridy = row * 2 + 1;
-        panel.add(field, g);
+    /** Shared white rounded field, identical to the rest of the application. */
+    private JTextField styledField(JTextField field) {
+        UIUtil.styleField(field, 16);
+        return field;
+    }
+
+    private JComboBox<?> styledCombo(JComboBox<?> combo) {
+        combo.setFont(FIELD_FONT);
+        combo.setBackground(FIELD_BG);
+        return combo;
+    }
+
+    /** Field wrapped so a small grey trailing icon sits inside its right edge. */
+    private JComponent fieldWithIcon(JTextField field, String iconKey) {
+        styledField(field);
+        field.setBorder(BorderFactory.createEmptyBorder(5, 8, 5, 4));
+        JPanel wrap = new JPanel(new BorderLayout());
+        wrap.setBackground(FIELD_BG);
+        wrap.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(FIELD_BORDER, 1, true),
+                BorderFactory.createEmptyBorder(1, 1, 1, 8)));
+        JLabel icon = new JLabel(ButtonIcons.of(iconKey, ICON_GREY));
+        icon.setOpaque(false);
+        wrap.add(field, BorderLayout.CENTER);
+        wrap.add(icon, BorderLayout.EAST);
+        return wrap;
     }
 
     /**
-     * Two-column variant of the vertical mode: each column keeps its own
-     * label above its field, and both columns share the width equally.
+     * GST field showing the design's grey placeholder hint while empty; the
+     * hint itself is never saved (see {@link #gstValue()}).
      */
-    private void addFieldAt(JPanel panel, int row, int col, String label, javax.swing.JComponent field) {
-        GridBagConstraints g = new GridBagConstraints();
-        g.insets = new Insets(4, 6, 4, 6);
-        g.anchor = GridBagConstraints.WEST;
-        g.gridx = col; g.gridy = row * 2; g.gridwidth = 1;
-        g.weightx = 1.0; g.fill = GridBagConstraints.HORIZONTAL;
-        panel.add(styledLabel(label), g);
-        g.gridy = row * 2 + 1;
-        panel.add(field, g);
+    private JComponent gstField() {
+        styledField(dairyGst);
+        dairyGst.addFocusListener(new FocusAdapter() {
+            @Override
+            public void focusGained(FocusEvent e) {
+                if (GST_HINT.equals(dairyGst.getText())) {
+                    dairyGst.setText("");
+                    dairyGst.setForeground(TEXT_DARK);
+                }
+            }
+
+            @Override
+            public void focusLost(FocusEvent e) {
+                if (dairyGst.getText().isBlank()) {
+                    dairyGst.setText(GST_HINT);
+                    dairyGst.setForeground(HINT_GREY);
+                }
+            }
+        });
+        return dairyGst;
     }
 
-    /** Combo-box variant of the vertical label-above-field layout. */
-    private void addFieldCombo(JPanel panel, int row, String label, JComboBox<?> box) {
-        addField(panel, row, label, box);
-    }
-
-    /**
-     * Bottom area of the screen: large action buttons centered, filling the
-     * space below the three section panels.
-     */
+    /** Centred action row: dark-teal Save Settings and light-blue Change Password. */
     private JPanel buildButtonArea() {
-        // Extra 5px top padding so the buttons always keep a visible gap
-        // below the form fields above.
-        JPanel p = new JPanel(new FlowLayout(FlowLayout.CENTER, 10, 0));
-        p.setBorder(BorderFactory.createEmptyBorder(5, 0, 0, 0));
+        JPanel p = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.CENTER, 14, 4));
+        p.setOpaque(false);
 
-        // Same button size, font, colours and border style as the
-        // Customer Details page — styleSmallButton defaults, no custom size.
-        JButton save = new JButton("Save Settings");
-        UIUtil.styleSmallButton(save, new Color(0x2E7D32)); // green, app standard
+        JButton save = new JButton("Save Settings", ButtonIcons.of("Save", Color.WHITE));
+        UIUtil.styleSmallButton(save, SAVE_TEAL);
         save.addActionListener(e -> saveSettings());
         p.add(save);
 
-        JButton changePass = new JButton("Change Password");
-        UIUtil.styleSmallButton(changePass, new Color(0x1976D2)); // blue, app standard
-        changePass.addActionListener(e -> new PasswordChangeDialog(findOwner(), username).setVisible(true));
+        JButton changePass = new JButton("Change Password", ButtonIcons.of("Key", TEXT_DARK));
+        UIUtil.styleAccentButton(changePass, PASS_BLUE);
+        changePass.setForeground(TEXT_DARK);
+        changePass.addActionListener(e ->
+                new PasswordChangeDialog(findOwner(), username).setVisible(true));
         p.add(changePass);
 
         return p;
@@ -264,13 +306,20 @@ public class SettingsPanel extends JPanel {
         setText(dairyAddress, s.get("dairy.address"));
         setText(dairyMobile, s.get("dairy.mobile"));
         setText(dairyEmail, s.get("dairy.email"));
-        setText(dairyGst, s.get("dairy.gst"));
+        if (s.get("dairy.gst") == null || s.get("dairy.gst").isBlank()) {
+            dairyGst.setText(GST_HINT);
+            dairyGst.setForeground(HINT_GREY);
+        } else {
+            dairyGst.setText(s.get("dairy.gst"));
+            dairyGst.setForeground(TEXT_DARK);
+        }
         setText(dateFormat, s.get("app.date_format"));
         setText(currencySymbol, s.get("app.currency_symbol"));
         setText(decimalPlaces, s.get("app.decimal_places"));
         defaultShift.setSelectedItem(s.getOrDefault("app.default_shift", "Morning"));
         defaultMilkType.setSelectedItem(s.getOrDefault("app.default_milk_type", "Cow"));
         manualRateOverride.setSelectedItem(s.getOrDefault("app.manual_rate_override", "false"));
+        themeSelector.setSelectedItem(Theme.byId(s.get("app.theme")));
         setText(fatMin, s.get("fat.min"));
         setText(fatMax, s.get("fat.max"));
         setText(snfMin, s.get("snf.min"));
@@ -288,24 +337,33 @@ public class SettingsPanel extends JPanel {
             settingsService.saveAll(mapOf(
                     "dairy.name", dairyName.getText(), "dairy.owner", dairyOwner.getText(),
                     "dairy.address", dairyAddress.getText(), "dairy.mobile", dairyMobile.getText(),
-                    "dairy.email", dairyEmail.getText(), "dairy.gst", dairyGst.getText(),
+                    "dairy.email", dairyEmail.getText(), "dairy.gst", gstValue(),
                     "app.date_format", dateFormat.getText(), "app.currency_symbol", currencySymbol.getText(),
                     "app.decimal_places", decimalPlaces.getText(),
                     "app.default_shift", (String) defaultShift.getSelectedItem(),
                     "app.default_milk_type", (String) defaultMilkType.getSelectedItem(),
                     "app.manual_rate_override", (String) manualRateOverride.getSelectedItem(),
+                    "app.theme", ((Theme) themeSelector.getSelectedItem()).getId(),
                     "fat.min", fatMin.getText(), "fat.max", fatMax.getText(),
                     "snf.min", snfMin.getText(), "snf.max", snfMax.getText(),
                     "fat.min_cow", fatMinCow.getText(), "fat.max_cow", fatMaxCow.getText(),
                     "fat.min_buffalo", fatMinBuf.getText(), "fat.max_buffalo", fatMaxBuf.getText(),
                     "fat.min_mix", fatMinMix.getText(), "fat.max_mix", fatMaxMix.getText()));
-            JOptionPane.showMessageDialog(this, "Settings saved successfully.", "Settings",
+            UIUtil.showMessage(this, "Settings saved successfully.", "Settings",
                     JOptionPane.INFORMATION_MESSAGE);
             // Push the new dairy name to every open screen immediately.
-            dairy.erp.util.AppBus.fireDairyNameChanged(dairyName.getText());
+            AppBus.fireDairyNameChanged(dairyName.getText());
+            // Apply the selected theme live across the whole application.
+            UIUtil.applyTheme((Theme) themeSelector.getSelectedItem());
         } catch (RuntimeException ex) {
-            JOptionPane.showMessageDialog(this, ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+            UIUtil.showMessage(this, ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
         }
+    }
+
+    /** The GST value to persist — the placeholder hint counts as empty. */
+    private String gstValue() {
+        String t = dairyGst.getText();
+        return GST_HINT.equals(t) ? "" : t;
     }
 
     private Map<String, String> mapOf(String... kv) {
@@ -328,4 +386,3 @@ public class SettingsPanel extends JPanel {
         return (java.awt.Frame) c;
     }
 }
-

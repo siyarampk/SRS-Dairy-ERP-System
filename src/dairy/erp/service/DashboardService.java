@@ -85,6 +85,43 @@ public class DashboardService {
         return summary;
     }
 
+    /**
+     * Total milk-collection earnings per day for the seven days ending on
+     * (and including) {@code endDate}. Days without collections are included
+     * with zero so the chart always shows a full week.
+     */
+    public java.util.Map<LocalDate, BigDecimal> dailyEarningsLast7Days(LocalDate endDate) {
+        LocalDate start = endDate.minusDays(6);
+        String sql = "SELECT collection_date, COALESCE(SUM(amount),0) AS amt "
+                + "FROM milk_collection WHERE collection_date BETWEEN ? AND ? "
+                + "GROUP BY collection_date";
+        java.util.Map<LocalDate, BigDecimal> found = new java.util.HashMap<>();
+        try (Connection c = DatabaseManager.getConnection();
+             PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setString(1, start.toString());
+            ps.setString(2, endDate.toString());
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    try {
+                        found.put(LocalDate.parse(rs.getString("collection_date")),
+                                rs.getBigDecimal("amt"));
+                    } catch (Exception parse) {
+                        LOG.warning("Skipping unparseable collection_date row: "
+                                + parse.getMessage());
+                    }
+                }
+            }
+        } catch (SQLException e) {
+            LOG.severe("Daily earnings query failed: " + e.getMessage());
+            throw new RuntimeException("Could not load daily earnings.", e);
+        }
+        java.util.Map<LocalDate, BigDecimal> result = new java.util.LinkedHashMap<>();
+        for (LocalDate d = start; !d.isAfter(endDate); d = d.plusDays(1)) {
+            result.put(d, found.getOrDefault(d, BigDecimal.ZERO));
+        }
+        return result;
+    }
+
     private BigDecimal weightedAverage(BigDecimal weightedSum, BigDecimal totalQty) {
         if (totalQty == null || totalQty.signum() == 0) {
             return BigDecimal.ZERO;

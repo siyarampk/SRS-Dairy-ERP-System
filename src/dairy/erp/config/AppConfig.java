@@ -10,15 +10,15 @@ import java.nio.file.Paths;
  */
 public final class AppConfig {
 
-    public static final String APP_NAME = "Dairy ERP - Milk Collection Management System";
-    public static final String APP_VERSION = "1.0";
+    public static final String APP_NAME = "Dairy ERP";
+    public static final String APP_PRODUCT_NAME = "SRS Dairy ERP";
+    public static final String APP_TAGLINE = "Milk Collection & Dairy Management System";
+    public static final String APP_VERSION = "1.0.0";
+    public static final String APP_BUILD = "Build 2026.08";
+    public static final java.awt.Color BRAND_COLOR = new java.awt.Color(0x1a, 0x5f, 0x7a);
     public static final String DB_FILE_NAME = "dairy.db";
 
-    public static final String DEFAULT_ADMIN_USER = "admin";
-    public static final String DEFAULT_ADMIN_PASS = "admin11";
-
-    private static final Path BASE_DIR =
-            Paths.get(System.getProperty("user.dir")).toAbsolutePath().normalize();
+    private static final Path BASE_DIR = Paths.get(System.getProperty("user.dir")).toAbsolutePath().normalize();
 
     private AppConfig() {
     }
