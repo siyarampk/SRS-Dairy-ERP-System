@@ -35,6 +35,9 @@ import java.awt.GridBagLayout;
 import java.awt.GridLayout;
 import javax.swing.Box;
 import java.awt.Insets;
+import java.awt.print.PageFormat;
+import java.awt.print.Paper;
+import java.awt.print.PrinterJob;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalTime;
@@ -993,118 +996,114 @@ public class MilkCollectionPanel extends JPanel {
         customerCodeField.requestFocusInWindow();
     }
 
-    private void printSlip(MilkCollection m) {
+      private void printSlip(MilkCollection m) {
         String dairyName = settingsService.get("dairy.name");
         if (dairyName == null || dairyName.isBlank()) {
-            dairyName = "ANIL DAIRY"; // Default based on slip
+            dairyName = "ANIL DAIRY";
         }
         String softwareName = settingsService.get("dairy.software_name");
         if (softwareName == null || softwareName.isBlank()) {
-            softwareName = "Siyaram Dairy Software"; // Default based on slip
+            softwareName = "Siyaram Dairy Software";
         }
 
         List<PrintUtil.StyledLine> lines = new ArrayList<>();
 
-        // Epson LQ-310 draft-style look: heavy bold monospace. Sizes kept
-        // moderate — PrintUtil auto-fits the block to the paper width and
-        // centres it, so nothing is clipped on narrow slip paper.
-        Font headerFont = new Font("Lucida Console", Font.BOLD, 12);
-        Font bodyFont = new Font("Lucida Console", Font.BOLD, 12);
-        Font smallFont = new Font("Lucida Console", Font.BOLD, 10);
-        //Font smallFont = new Font("Courier New", Font.PLAIN, 10);
+        // Epson LQ-310 (24-pin dot-matrix): 12pt ≈ 10 CPI = the printer's
+        // standard letter-quality pitch; 10pt ≈ 12 CPI (smaller).
+        Font headerFont = new Font("Courier New", Font.BOLD, 12);
+        Font bodyFont = new Font("Courier New", Font.BOLD, 12);
+        Font smallFont = new Font("Courier New", Font.BOLD, 10);
 
-        int slipWidth = 24;
-        String border = "-".repeat(slipWidth);
+        // Layout width in characters. Sized so the last character stops ~2
+        // spaces before the right edge on 3" slip paper (LQ-310 at 10 CPI:
+        // 30 chars/inch-capacity, minus ~3 chars left margin, minus ~2 chars
+        // right margin = 25 usable).
+        int slipWidth = 25;
 
-        // Header: large bold dairy name
+        String border = "========================="; // 25-char solid border
+
+        // Header
         lines.add(new PrintUtil.StyledLine(centerPad(dairyName.toUpperCase(), slipWidth), headerFont));
         lines.add(new PrintUtil.StyledLine(border, bodyFont));
- 
 
+        String formattedDate = m.getCollectionDate() == null ? ""
+                : m.getCollectionDate().format(java.time.format.DateTimeFormatter.ofPattern("dd-MM-yy"));
 
-        String formattedDate = m.getCollectionDate() == null ? "": m.getCollectionDate().format(java.time.format.DateTimeFormatter.ofPattern("dd-MM-yy", java.util.Locale.ENGLISH));
-
-        // Shift suffix shown with the time: (M)orning / (E)vening
         DateTimeFormatter timeFormatter = DateTimeFormatter.ofPattern("hh:mm:ss");
         String timeText = LocalTime.now().format(timeFormatter);
         String shiftAbbr = "Evening".equalsIgnoreCase(shiftName(m.getShift())) ? "E" : "M";
         String timeWithShift = timeText + " (" + shiftAbbr + ")";
 
-        
-
-        // Detail rows: bold label left, value centred after the colon
+        // Detail rows
         lines.add(new PrintUtil.StyledLine(
-                slipFieldCentered("Name", nullToEmpty(m.getCustomerName()).toUpperCase(), slipWidth), bodyFont));
-        lines.add(new PrintUtil.StyledLine(slipFieldCentered("Date", formattedDate, slipWidth), bodyFont));
-        lines.add(new PrintUtil.StyledLine(
-                slipFieldCentered("Shift", timeWithShift, slipWidth), bodyFont));
-        lines.add(new PrintUtil.StyledLine(
-                slipFieldCentered("Code", nullToEmpty(m.getCustomerCode()).toUpperCase() +"/ "+ nullToEmpty(m.getMilkType()).toUpperCase(), slipWidth), bodyFont));
-        lines.add(new PrintUtil.StyledLine(slipFieldCentered("Liter", CurrencyUtil.format(m.getQuantity()), slipWidth),
+                slipField("Name", nullToEmpty(m.getCustomerName()).toUpperCase(), slipWidth), bodyFont));
+        lines.add(new PrintUtil.StyledLine(slipField("Date", formattedDate, slipWidth), bodyFont));
+        lines.add(new PrintUtil.StyledLine(slipField("Shift", timeWithShift, slipWidth), bodyFont));
+        lines.add(new PrintUtil.StyledLine(slipField("Code",
+                nullToEmpty(m.getCustomerCode()).toUpperCase() + "/ " + nullToEmpty(m.getMilkType()).toUpperCase(),
+                slipWidth), bodyFont));
+        lines.add(new PrintUtil.StyledLine(slipField("Liter", CurrencyUtil.format(m.getQuantity()), slipWidth),
                 bodyFont));
         lines.add(
-                new PrintUtil.StyledLine(slipFieldCentered("FAT", trimZeros(m.getFat()) + " %", slipWidth), bodyFont));
-        lines.add(new PrintUtil.StyledLine(slipFieldCentered("Rs.", CurrencyUtil.formatMoney(m.getAmount()), slipWidth),
+                new PrintUtil.StyledLine(slipField("FAT", trimZeros(m.getFat()) + " %", slipWidth), bodyFont));
+        lines.add(new PrintUtil.StyledLine(slipField("Rs.", CurrencyUtil.formatMoney(m.getAmount()), slipWidth),
                 bodyFont));
 
         // Footer
-        // lines.add(new PrintUtil.StyledLine(border, bodyFont));
-        lines.add(new PrintUtil.StyledLine(centerPad("------- E&OE -------", slipWidth), smallFont));
+        //lines.add(new PrintUtil.StyledLine(border, bodyFont));
+        lines.add(new PrintUtil.StyledLine(centerPad("--------- E&OE ---------", slipWidth), smallFont));
         lines.add(new PrintUtil.StyledLine(centerPad(softwareName.toUpperCase(), slipWidth), smallFont));
         lines.add(new PrintUtil.StyledLine(centerPad("Thank You", slipWidth), smallFont));
 
-        PrintUtil.printText(findOwner(), "Milk Slip", lines, true);
+        PrintUtil.printTextDirect(findOwner(), "Milk Slip", lines, create2InchPageFormat());
     }
 
-    /** Centres and pads {@code text} inside a fixed {@code width} using spaces. */
-    private static String centerPad(String text, int width) {
+    private PageFormat create2InchPageFormat() {
+        double width = 2.0 * 72.0; // change to 3.0 if your roll is 3" wide
+        double height = 4.0 * 72.0; // 8 inches = 576 points (matches printer + driver)
+        Paper paper = new Paper();
+        paper.setSize(width, height);
+        paper.setImageableArea(2, 0, width - 4, height);
+        PageFormat pf = new PageFormat();
+        pf.setPaper(paper);
+        pf.setOrientation(PageFormat.PORTRAIT);
+        return pf;
+    }
+
+     private static String centerPad(String text, int width) {
         if (text == null)
             text = "";
         int left = Math.max(0, (width - text.length()) / 2);
-        int right = Math.max(0, width - text.length() - left);
-        return " ".repeat(left) + text + " ".repeat(right);
+        return " ".repeat(left) + text;
     }
 
-    private static String slipField(String label, String value, int width) {
+     private static String slipField(String label, String value, int width) {
         if (value == null)
             value = "";
-        String prefix = label + ":";
-
-        // Calculate total spaces needed between prefix and value
-        // int totalPadding = width - prefix.length() - value.length();
-        int totalPadding = 2; // Fixed width for label and colon
-
-        // Ensure at least 1 space separator if text is long
-        if (totalPadding < 1) {
-            totalPadding = 1;
+        // One space between label and colon; value immediately after the colon.
+        String head = String.format("%s:", label);
+        String line = head + value;
+        if (line.length() > width) {
+            int maxValueLen = Math.max(1, width - head.length());
+            line = head + (value.length() > maxValueLen ? value.substring(0, maxValueLen) : value);
         }
-
-        return prefix + " ".repeat(totalPadding) + value;
+        return line;
     }
 
-    private static String slipFieldCentered(String label, String value, int width) {
-        if (value == null)
-            value = "";
-        String head = String.format("%-5s: ", label);
-        int remaining = width - head.length();
+    // private static String slipFieldCentered(String label, String value, int width) {
+    //     if (value == null)
+    //         value = "";
+    //     String head = String.format("%-6s: ", label);
+    //     int remaining = width - head.length() - value.length();
 
-        String padded = remaining > 0 ? String.format("%-2" + remaining + "s", value) : value;
-
-        String line = head + padded;
-
-        return line.length() > width ? line.substring(0, width) : line;
-    }
-
-    // private static String slipFieldCentered(String label, String value, int
-    // width) {
-    // if (value == null)
-    // value = "";
-    // String head = String.format("%-6s: ", label);
-    // int remaining = width - head.length();
-    // String padded = remaining > 0 ? centerPad(value, remaining) : value;
-    // String line = head + padded;
-    // return line.length() > width ? line.substring(0, width) : line;
+    //     if (remaining > 0) {
+    //         int leftPad = remaining / 2;
+    //         return head + " ".repeat(leftPad) + value;
+    //     }
+    //     return head + value;
     // }
+
+ 
 
     /** Returns the full shift name: "Morning" or "Evening". */
     private static String shiftName(String shift) {
@@ -1118,7 +1117,7 @@ public class MilkCollectionPanel extends JPanel {
     }
 
     /** Formats a number without trailing zeros, e.g. 4.20 -> 4.2. */
-    private static String trimZeros(BigDecimal value) {
+   private static String trimZeros(BigDecimal value) {
         if (value == null) {
             return "0";
         }
