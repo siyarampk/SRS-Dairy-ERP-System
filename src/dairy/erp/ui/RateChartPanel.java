@@ -44,6 +44,10 @@ public class RateChartPanel extends JPanel {
 
     private static final Font LABEL_FONT = new Font(Font.SANS_SERIF, Font.PLAIN, 16);
 
+    /** Fixed width of the left entry panel — sized so every field is fully
+     * visible without stretching the panel or the window. */
+    private static final int LEFT_PANEL_WIDTH = 560;
+
     private final RateChartDAO rateChartDAO = new RateChartDAO();
     private final dairy.erp.service.SettingsService settingsService = new dairy.erp.service.SettingsService();
     private final dairy.erp.util.DairyNameLabel dairyNameLabel = new dairy.erp.util.DairyNameLabel();
@@ -179,6 +183,7 @@ public class RateChartPanel extends JPanel {
     /** Builds a preferred-width row so Cow, Buffalo and Mix text never clips. */
     private JPanel milkTypePanel() {
         JPanel panel = new JPanel(new GridBagLayout());
+        panel.setOpaque(false); // blend with the white card
         GridBagConstraints gc = new GridBagConstraints();
         gc.fill = GridBagConstraints.NONE;
         gc.anchor = GridBagConstraints.WEST;
@@ -196,6 +201,7 @@ public class RateChartPanel extends JPanel {
     /** Builds a preferred-width row with the Active Yes/No radio buttons. */
     private JPanel activePanel() {
         JPanel panel = new JPanel(new GridBagLayout());
+        panel.setOpaque(false); // blend with the white card
         GridBagConstraints gc = new GridBagConstraints();
         gc.fill = GridBagConstraints.NONE;
         gc.anchor = GridBagConstraints.WEST;
@@ -269,6 +275,12 @@ public class RateChartPanel extends JPanel {
         UIUtil.styleComponent(mixRadio, 18);
         UIUtil.styleComponent(activeYesRadio, 18);
         UIUtil.styleComponent(activeNoRadio, 18);
+        // No background behind the radio buttons — they sit on the white card.
+        cowRadio.setOpaque(false);
+        buffaloRadio.setOpaque(false);
+        mixRadio.setOpaque(false);
+        activeYesRadio.setOpaque(false);
+        activeNoRadio.setOpaque(false);
         // Use exactly the same shared styling as the Customer Details grid.
         UIUtil.styleCustomerDetailsTable(table);
         configureTableColumns();
@@ -319,10 +331,11 @@ public class RateChartPanel extends JPanel {
         formCard.add(manageHeadingPanel, BorderLayout.NORTH);
         formCard.add(buildForm(), BorderLayout.CENTER);
         left.add(formCard, BorderLayout.CENTER);
-        // Fixed width wide enough for every field row to be fully visible
-        // on load; the user can still drag the divider to widen it.
-        left.setPreferredSize(new Dimension(460, 0));
-        left.setMinimumSize(new Dimension(460, 0));
+        // Fixed opening size: the entry form always opens LEFT_PANEL_WIDTH px
+        // wide and can never shrink below that, so every field is visible
+        // properly; extra window width always goes to the table.
+        left.setPreferredSize(new Dimension(LEFT_PANEL_WIDTH, 0));
+        left.setMinimumSize(new Dimension(LEFT_PANEL_WIDTH, 0));
 
         // Right column: white card with a "Data Table" heading above the grid.
         JPanel right = new JPanel(new BorderLayout(4, 4));
@@ -341,23 +354,20 @@ public class RateChartPanel extends JPanel {
         right.add(buildTable(), BorderLayout.CENTER);
         right.setMinimumSize(new Dimension(400, 0));
 
-        // JSplitPane allows stretching left/right by dragging the divider.
+        // JSplitPane layout: the left entry panel is kept at its fixed width
+        // on every window resize — no dragging needed; all spare width goes
+        // to the rate chart table on the right.
         JSplitPane split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, left, right);
-        split.setDividerLocation(460);
+        split.setDividerLocation(LEFT_PANEL_WIDTH);
         // All extra width goes to the table side so the form keeps its size.
         split.setResizeWeight(0.0);
-        // JSplitPane clamps the divider while the panel has no size yet, which
-        // squeezes the form fields on load — apply the fixed width once the
-        // panel gets its real size (one-shot), so every field is visible.
+        // A divider location set while the panel has no size yet is clamped,
+        // so (re)apply the fixed width once the panel has its real size and
+        // again on every subsequent resize — the panel always stays fixed.
         split.addComponentListener(new java.awt.event.ComponentAdapter() {
-            private boolean applied = false;
-
             @Override
             public void componentResized(java.awt.event.ComponentEvent e) {
-                if (!applied && split.getWidth() > 0) {
-                    applied = true;
-                    split.setDividerLocation(460);
-                }
+                split.setDividerLocation(LEFT_PANEL_WIDTH);
             }
         });
         split.setContinuousLayout(true);

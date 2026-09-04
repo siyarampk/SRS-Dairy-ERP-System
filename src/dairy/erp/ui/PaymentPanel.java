@@ -57,6 +57,10 @@ public class PaymentPanel extends JPanel {
     private static final Color FIELD_BORDER = new Color(0xC9, 0xD3, 0xDA);
     private static final Color GHOST_GREY = new Color(0x9a, 0xa5, 0xaf);
 
+    /** Fixed width of the left entry panel — sized so every field is fully
+     * visible without stretching the panel or the window. */
+    private static final int LEFT_PANEL_WIDTH = 560;
+
     private final PaymentService paymentService = new PaymentService();
     private final dairy.erp.service.SettingsService settingsService = new dairy.erp.service.SettingsService();
     private final dairy.erp.util.DairyNameLabel dairyNameLabel = new dairy.erp.util.DairyNameLabel();
@@ -67,8 +71,8 @@ public class PaymentPanel extends JPanel {
     private final JTextField amountField = new GhostField("Amount", 12);
     private final JComboBox<String> modeBox = new JComboBox<>(new String[]{"Cash", "Bank", "UPI", "Other"});
     private final JTextField referenceField = new GhostField("Reference", 16);
-    // Remarks is a multi-line box in the reference design.
-    private final javax.swing.JTextArea remarksArea = new javax.swing.JTextArea(6, 18);
+    // Remarks: single-line field, same size and width as the other fields.
+    private final JTextField remarksField = new GhostField("Remarks", 18);
     // Form heading follows the selected menu: "New Payment Entry" (new) or
     // "Payment" (history), as in the reference screenshots.
     private final JLabel entryHeading = new JLabel("New Payment Entry");
@@ -137,18 +141,14 @@ public class PaymentPanel extends JPanel {
         UIUtil.styleField(customerNameField, 16);
         UIUtil.styleField(amountField, 12);
         UIUtil.styleField(referenceField, 14);
+        UIUtil.styleField(remarksField, 18);
         styleRoundedField(customerNameField);
         // Customer name is auto-filled/read-only: light grey like every other
         // disabled field in the application.
         customerNameField.setBackground(UIUtil.DISABLED_BG);
         styleRoundedField(amountField);
         styleRoundedField(referenceField);
-        // Remarks: multi-line, word-wrapped, rounded border like the fields.
-        remarksArea.setLineWrap(true);
-        remarksArea.setWrapStyleWord(true);
-        remarksArea.setFont(remarksArea.getFont().deriveFont(16f));
-        remarksArea.setBackground(Color.WHITE);
-        remarksArea.setBorder(BorderFactory.createEmptyBorder(8, 10, 8, 10));
+        styleRoundedField(remarksField);
         // Payment mode combo and the date picker's text field.
         UIUtil.styleComponent(modeBox, 16);
         modeBox.setBackground(Color.WHITE);
@@ -188,9 +188,11 @@ public class PaymentPanel extends JPanel {
         headerRow.add(dairyNameLabel, BorderLayout.EAST);
         left.add(headerRow, BorderLayout.NORTH);
         left.add(buildForm(), BorderLayout.CENTER);
-        // Fixed opening width; extra window width always goes to the table.
-        left.setPreferredSize(new Dimension(420, 0));
-        left.setMinimumSize(new Dimension(420, 0));
+        // Fixed opening size: the entry form always opens LEFT_PANEL_WIDTH px
+        // wide and can never shrink below that, so every field is visible
+        // properly; extra window width always goes to the table.
+        left.setPreferredSize(new Dimension(LEFT_PANEL_WIDTH, 0));
+        left.setMinimumSize(new Dimension(LEFT_PANEL_WIDTH, 0));
 
         // Right column: bold "Payment History" heading above the table.
         JPanel right = new JPanel(new BorderLayout(4, 4));
@@ -201,23 +203,21 @@ public class PaymentPanel extends JPanel {
         right.add(buildTable(), BorderLayout.CENTER);
         right.setMinimumSize(new Dimension(400, 0));
 
-        // JSplitPane allows stretching left/right by dragging the divider.
+        // JSplitPane layout: the left entry panel is kept at its fixed width
+        // on every window resize — no dragging needed; all spare width goes
+        // to the payment history table on the right.
         JSplitPane split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, left, right);
-        split.setDividerLocation(420);
+        split.setDividerLocation(LEFT_PANEL_WIDTH);
         split.setResizeWeight(0.0);
         split.setContinuousLayout(true);
         split.setBorder(null);
-        // JSplitPane clamps the divider while the panel has no size yet —
-        // apply the fixed width once the panel gets its real size (one-shot).
+        // A divider location set while the panel has no size yet is clamped,
+        // so (re)apply the fixed width once the panel has its real size and
+        // again on every subsequent resize — the panel always stays fixed.
         split.addComponentListener(new java.awt.event.ComponentAdapter() {
-            private boolean applied = false;
-
             @Override
             public void componentResized(java.awt.event.ComponentEvent e) {
-                if (!applied && split.getWidth() > 0) {
-                    applied = true;
-                    split.setDividerLocation(420);
-                }
+                split.setDividerLocation(LEFT_PANEL_WIDTH);
             }
         });
 
@@ -255,11 +255,7 @@ public class PaymentPanel extends JPanel {
         addRow(card, g, row++, "Customer Name:", customerNameField);
         addRow(card, g, row++, "Amount:", amountField);
         addRow(card, g, row++, "Reference:", referenceField);
-        // Multi-line remarks box inside its own rounded scroll pane.
-        JScrollPane remarksScroll = new JScrollPane(remarksArea);
-        remarksScroll.setBorder(BorderFactory.createLineBorder(FIELD_BORDER, 1, true));
-        remarksScroll.setPreferredSize(new Dimension(10, 130));
-        addRow(card, g, row++, "Remarks:", remarksScroll);
+        addRow(card, g, row++, "Remarks:", remarksField);
 
         styleActionButtons();
         rebuildButtons();
@@ -485,7 +481,7 @@ public class PaymentPanel extends JPanel {
         p.setAmount(ValidationUtil.parseDecimal(amountField.getText()));
         p.setPaymentMode((String) modeBox.getSelectedItem());
         p.setReference(referenceField.getText());
-        p.setRemarks(remarksArea.getText());
+        p.setRemarks(remarksField.getText());
         try {
             if (editingId > 0) {
                 p.setId(editingId);
@@ -550,7 +546,7 @@ public class PaymentPanel extends JPanel {
                 amountField.setText(p.getAmount().toPlainString());
                 modeBox.setSelectedItem(p.getPaymentMode());
                 referenceField.setText(p.getReference());
-                remarksArea.setText(p.getRemarks());
+                remarksField.setText(p.getRemarks());
                 return;
             }
         }
@@ -586,7 +582,7 @@ public class PaymentPanel extends JPanel {
         customerNameField.setText("");
         amountField.setText("");
         referenceField.setText("");
-        remarksArea.setText("");
+        remarksField.setText("");
         datePicker.setDate(LocalDate.now());
         modeBox.setSelectedIndex(0);
         customerCodeField.requestFocusInWindow();

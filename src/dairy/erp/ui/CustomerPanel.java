@@ -48,6 +48,10 @@ public class CustomerPanel extends JPanel {
     private static final Font LABEL_FONT = new Font(Font.SANS_SERIF, Font.PLAIN, 17);
     private static final Font FIELD_FONT = new Font(Font.SANS_SERIF, Font.PLAIN, 17);
 
+    /** Fixed width of the left entry panel — sized so every field is fully
+     * visible without stretching the panel or the window. */
+    private static final int LEFT_PANEL_WIDTH = 560;
+
     private final CustomerService customerService = new CustomerService();
     private final dairy.erp.service.SettingsService settingsService = new dairy.erp.service.SettingsService();
     private final dairy.erp.util.DairyNameLabel dairyNameLabel = new dairy.erp.util.DairyNameLabel();
@@ -137,10 +141,11 @@ public class CustomerPanel extends JPanel {
         formCard.add(detailsHeading, BorderLayout.NORTH);
         formCard.add(buildForm(), BorderLayout.CENTER);
         left.add(formCard, BorderLayout.CENTER);
-        // Fixed width wide enough for every field row to be fully visible
-        // on load; the user can still drag the divider to widen it.
-        left.setPreferredSize(new Dimension(470, 0));
-        left.setMinimumSize(new Dimension(470, 0));
+        // Fixed opening size: the entry form always opens LEFT_PANEL_WIDTH px
+        // wide and can never shrink below that, so every field is visible
+        // properly; extra window width always goes to the table.
+        left.setPreferredSize(new Dimension(LEFT_PANEL_WIDTH, 0));
+        left.setMinimumSize(new Dimension(LEFT_PANEL_WIDTH, 0));
 
         // Right column: "Customer List" bold heading above the search bar and table.
         JPanel right = new JPanel(new BorderLayout(4, 4));
@@ -151,23 +156,20 @@ public class CustomerPanel extends JPanel {
         right.add(buildTableArea(), BorderLayout.CENTER);
         right.setMinimumSize(new Dimension(400, 0));
 
-        // JSplitPane allows stretching left/right by dragging the divider.
+        // JSplitPane layout: the left entry panel is kept at its fixed width
+        // on every window resize — no dragging needed; all spare width goes
+        // to the customer list on the right.
         JSplitPane split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, left, right);
-        split.setDividerLocation(470);
+        split.setDividerLocation(LEFT_PANEL_WIDTH);
         // All extra width goes to the table side so the form keeps its size.
         split.setResizeWeight(0.0);
-        // JSplitPane clamps the divider while the panel has no size yet, which
-        // squeezes the form fields on load — apply the fixed width once the
-        // panel gets its real size (one-shot), so every field is visible.
+        // A divider location set while the panel has no size yet is clamped,
+        // so (re)apply the fixed width once the panel has its real size and
+        // again on every subsequent resize — the panel always stays fixed.
         split.addComponentListener(new java.awt.event.ComponentAdapter() {
-            private boolean applied = false;
-
             @Override
             public void componentResized(java.awt.event.ComponentEvent e) {
-                if (!applied && split.getWidth() > 0) {
-                    applied = true;
-                    split.setDividerLocation(470);
-                }
+                split.setDividerLocation(LEFT_PANEL_WIDTH);
             }
         });
         split.setContinuousLayout(true);
@@ -210,6 +212,9 @@ public class CustomerPanel extends JPanel {
         activeRadio.setSelected(true);
         activeRadio.setFont(FIELD_FONT);
         inactiveRadio.setFont(FIELD_FONT);
+        // No background behind the radio buttons — they sit on the white card.
+        activeRadio.setOpaque(false);
+        inactiveRadio.setOpaque(false);
         UIUtil.styleComponent(searchStatusBox, 18);
         UIUtil.styleComponent(regDatePicker.getTextField(), 18);
         UIUtil.styleComponent(regDatePicker.getButton(), 18);
@@ -222,6 +227,10 @@ public class CustomerPanel extends JPanel {
         cowRadio.setFont(FIELD_FONT);
         buffaloRadio.setFont(FIELD_FONT);
         mixRadio.setFont(FIELD_FONT);
+        // No background behind the radio buttons — they sit on the white card.
+        cowRadio.setOpaque(false);
+        buffaloRadio.setOpaque(false);
+        mixRadio.setOpaque(false);
 
         // Readable striped table; shared with Rate Chart for an exact match.
         UIUtil.styleCustomerDetailsTable(table);
@@ -293,6 +302,7 @@ public class CustomerPanel extends JPanel {
     /** Builds a flow panel containing the three milk-type radio buttons. */
     private JPanel milkTypePanel() {
         JPanel p = new JPanel(new FlowLayout(FlowLayout.LEFT, 12, 0));
+        p.setOpaque(false); // blend with the white card
         p.add(cowRadio);
         p.add(buffaloRadio);
         p.add(mixRadio);
@@ -302,6 +312,7 @@ public class CustomerPanel extends JPanel {
     /** Builds a flow panel containing the Active/Inactive status radio buttons. */
     private JPanel statusPanel() {
         JPanel p = new JPanel(new FlowLayout(FlowLayout.LEFT, 12, 0));
+        p.setOpaque(false); // blend with the white card
         p.add(activeRadio);
         p.add(inactiveRadio);
         return p;
@@ -453,6 +464,12 @@ public class CustomerPanel extends JPanel {
             return;
         }
         Customer c = collectForm();
+        // Always generate the code fresh at save time so a code pre-filled
+        // earlier (while the form sat open) can never collide with a customer
+        // added in the meantime.
+        String generated = customerService.nextCode();
+        c.setCustomerCode(generated);
+        codeField.setText(generated);
         if (customerService.isCodeTaken(c.getCustomerCode(), -1)) {
             UIUtil.showMessage(this,
                     "Customer code '" + c.getCustomerCode() + "' already exists.",
@@ -464,7 +481,7 @@ public class CustomerPanel extends JPanel {
             UIUtil.showMessage(this, "Customer saved successfully.",
                     "Save", JOptionPane.INFORMATION_MESSAGE);
             loadAll();
-            clearFields();
+            newRecord(); // clear the form and generate the next customer code
         } catch (RuntimeException ex) {
             UIUtil.showMessage(this, ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
         }

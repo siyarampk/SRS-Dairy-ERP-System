@@ -68,7 +68,8 @@ public class SettingsPanel extends JPanel {
     private final JTextField decimalPlaces = new JTextField();
     private final JComboBox<String> defaultShift = new JComboBox<>(new String[]{"Morning", "Evening"});
     private final JComboBox<String> defaultMilkType = new JComboBox<>(new String[]{"Cow", "Buffalo", "Mix"});
-    private final JComboBox<String> manualRateOverride = new JComboBox<>(new String[]{"false", "true"});
+    private final JComboBox<String> allowRateAdjustment = new JComboBox<>(new String[]{"false", "true"});
+    private final JComboBox<String> allowDateAdjustment = new JComboBox<>(new String[]{"false", "true"});
     private final JComboBox<Theme> themeSelector = new JComboBox<>(Theme.ALL);
 
     // FAT/SNF bounds
@@ -146,7 +147,8 @@ public class SettingsPanel extends JPanel {
         row = addFieldRow(rows, g, row, "Decimal Places:", styledField(decimalPlaces));
         row = addFieldRow(rows, g, row, "Default Shift:", styledCombo(defaultShift));
         row = addFieldRow(rows, g, row, "Default Milk Type:", styledCombo(defaultMilkType));
-        row = addFieldRow(rows, g, row, "Manual Rate Override:", styledCombo(manualRateOverride));
+        row = addFieldRow(rows, g, row, "Allow Rate Adjustment:", styledCombo(allowRateAdjustment));
+        row = addFieldRow(rows, g, row, "Allow Collection Date Adjustment:", styledCombo(allowDateAdjustment));
         addFieldRow(rows, g, row, "App Theme:", styledCombo(themeSelector));
         return card("Application Settings", rows);
     }
@@ -318,7 +320,8 @@ public class SettingsPanel extends JPanel {
         setText(decimalPlaces, s.get("app.decimal_places"));
         defaultShift.setSelectedItem(s.getOrDefault("app.default_shift", "Morning"));
         defaultMilkType.setSelectedItem(s.getOrDefault("app.default_milk_type", "Cow"));
-        manualRateOverride.setSelectedItem(s.getOrDefault("app.manual_rate_override", "false"));
+        allowRateAdjustment.setSelectedItem(s.getOrDefault("app.allow_rate_adjustment", "false"));
+        allowDateAdjustment.setSelectedItem(s.getOrDefault("app.allow_date_adjustment", "false"));
         themeSelector.setSelectedItem(Theme.byId(s.get("app.theme")));
         setText(fatMin, s.get("fat.min"));
         setText(fatMax, s.get("fat.max"));
@@ -342,7 +345,8 @@ public class SettingsPanel extends JPanel {
                     "app.decimal_places", decimalPlaces.getText(),
                     "app.default_shift", (String) defaultShift.getSelectedItem(),
                     "app.default_milk_type", (String) defaultMilkType.getSelectedItem(),
-                    "app.manual_rate_override", (String) manualRateOverride.getSelectedItem(),
+                    "app.allow_rate_adjustment", (String) allowRateAdjustment.getSelectedItem(),
+                    "app.allow_date_adjustment", (String) allowDateAdjustment.getSelectedItem(),
                     "app.theme", ((Theme) themeSelector.getSelectedItem()).getId(),
                     "fat.min", fatMin.getText(), "fat.max", fatMax.getText(),
                     "snf.min", snfMin.getText(), "snf.max", snfMax.getText(),

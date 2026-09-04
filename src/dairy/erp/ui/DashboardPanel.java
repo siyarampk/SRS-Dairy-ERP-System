@@ -180,24 +180,30 @@ public class DashboardPanel extends JPanel {
         strip.setPreferredSize(new Dimension(7, 1));
         card.add(strip, BorderLayout.WEST);
 
-        JPanel left = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 0));
+        // GridBag centre area: the icon + text block is placed in the vertical
+        // middle of the box (anchored WEST horizontally, centered vertically).
+        JPanel left = new JPanel(new GridBagLayout());
         left.setOpaque(false);
-        left.add(iconLabel(icon, 30));
+        GridBagConstraints lc = new GridBagConstraints();
+        lc.anchor = GridBagConstraints.WEST;
+        left.add(iconLabel(icon, 30), lc);
 
-        JPanel text = new JPanel(new BorderLayout(0, 0));
+        // Value stacked directly above the caption, as one centred block.
+        JPanel text = new JPanel(new GridLayout(2, 1, 0, 2));
         text.setOpaque(false);
         value.setFont(value.getFont().deriveFont(Font.BOLD, 20f));
         value.setHorizontalAlignment(javax.swing.SwingConstants.LEFT);
-        text.add(value, BorderLayout.NORTH);
+        text.add(value);
         JLabel cap = new JLabel(caption);
         cap.setFont(cap.getFont().deriveFont(Font.PLAIN, 14f));
         cap.setForeground(new Color(0x44, 0x44, 0x44));
-        text.add(cap, BorderLayout.SOUTH);
-        left.add(text);
+        text.add(cap);
+        left.add(text, lc);
 
         card.add(left, BorderLayout.CENTER);
-        card.setPreferredSize(new Dimension(0, 240));
-        card.setMaximumSize(new Dimension(Integer.MAX_VALUE, 240));
+        // Taller box so the centred content has breathing room.
+        card.setPreferredSize(new Dimension(0, 300));
+        card.setMaximumSize(new Dimension(Integer.MAX_VALUE, 300));
         return card;
     }
 
@@ -207,7 +213,7 @@ public class DashboardPanel extends JPanel {
         card.setBackground(Color.WHITE);
         card.setBorder(BorderFactory.createCompoundBorder(
                 BorderFactory.createLineBorder(CARD_BORDER, 1, true),
-                BorderFactory.createEmptyBorder(6, 6, 25, 6)));
+                BorderFactory.createEmptyBorder(55, 6, 25, 6)));
         JPanel pad = new JPanel(new BorderLayout(0, 0));
         pad.setOpaque(false);
         JLabel image = loadDashboardImage();
@@ -235,9 +241,9 @@ public class DashboardPanel extends JPanel {
             if (raw == null) {
                 return null;
             }
-            // 1008x1051 resource — scale to a compact size that fits under the
-            // shift cards, keeping the aspect ratio.
-            int w = 300;
+            // Fixed display size of 350x330 (as requested). The source file is
+            // 489x510, so this stretches the image very slightly to fill the box.
+            int w = 420;
             int h = Math.round(w * (float) raw.getHeight(null) / raw.getWidth(null));
             Image scaled = raw.getScaledInstance(w, h, Image.SCALE_SMOOTH);
             JLabel label = new JLabel(new ImageIcon(scaled), javax.swing.SwingConstants.CENTER);

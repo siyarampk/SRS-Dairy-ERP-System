@@ -740,9 +740,13 @@ public final class UIUtil {
         root.add(buttons, BorderLayout.SOUTH);
 
         dlg.setContentPane(root);
+        // Set OK as the default button so Enter key closes the dialog.
+        dlg.getRootPane().setDefaultButton(ok);
         dlg.pack();
         dlg.setLocationRelativeTo(owner);
         dlg.setResizable(false);
+        // Focus the OK button so Enter works immediately.
+        ok.requestFocusInWindow();
         dlg.setVisible(true);
         return choice[0];
     }

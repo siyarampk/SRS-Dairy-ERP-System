@@ -12,8 +12,11 @@ import dairy.erp.util.ValidationUtil;
 
 import javax.swing.BorderFactory;
 import javax.swing.ButtonGroup;
+import javax.swing.Icon;
+import javax.swing.border.Border;
 import javax.swing.JButton;
 import javax.swing.JComboBox;
+import javax.swing.JComponent;
 import javax.swing.JFrame;
 import javax.swing.JLabel;
 import javax.swing.JOptionPane;
@@ -57,6 +60,10 @@ public class MilkCollectionPanel extends JPanel {
     private static final Font LABEL_FONT = new Font(Font.SANS_SERIF, Font.BOLD, 16);
     private static final Font FIELD_FONT = new Font(Font.SANS_SERIF, Font.BOLD, 16);
 
+    /** Fixed width of the left entry panel — sized so every field is fully
+     * visible without stretching the panel or the window. */
+    private static final int LEFT_PANEL_WIDTH = 560;
+
     // Slip print formatting: date like "30-Aug-2026" and time like "07:10:32".
     private static final java.time.format.DateTimeFormatter SLIP_DATE_FMT = java.time.format.DateTimeFormatter
             .ofPattern("dd-MMM-yyyy", java.util.Locale.ENGLISH);
@@ -67,7 +74,7 @@ public class MilkCollectionPanel extends JPanel {
     private final SettingsService settingsService = new SettingsService();
     private final dairy.erp.util.DairyNameLabel dairyNameLabel = new dairy.erp.util.DairyNameLabel();
 
-    private final JTextField dateField = new JTextField(DateUtil.toDisplay(LocalDate.now()), 12);
+    private final DatePicker datePicker = new DatePicker();
     private final JTextField customerCodeField = new JTextField(12);
     private final JTextField customerNameField = new JTextField(18);
     private final JRadioButton cowRadio = new JRadioButton("Cow");
@@ -101,6 +108,15 @@ public class MilkCollectionPanel extends JPanel {
 
     private Customer selectedCustomer;
     private int editingId = -1;
+    // Guards against re-entrant lookups: loadCustomer() moves focus to the
+    // quantity field, which fires focusLost on the code field and would call
+    // loadCustomer() again — repeating the "customer not found" dialog.
+    private boolean inLookup = false;
+    // buildForm() re-runs on every refreshForm(); this keeps the button action
+    // listeners from being attached more than once.
+    private boolean actionListenersAttached = false;
+    // Same guard for the field listeners (customer lookup / recalculation).
+    private boolean fieldListenersAttached = false;
 
     // Panel mode: "new" (entry form) or "history" (records).
     private boolean historyMode = false;
@@ -116,6 +132,8 @@ public class MilkCollectionPanel extends JPanel {
             return false;
         }
     };
+
+    private JPanel formContainer;
 
     public MilkCollectionPanel() {
         super(new BorderLayout(4, 4));
@@ -170,25 +188,31 @@ public class MilkCollectionPanel extends JPanel {
         headerRow.add(headerPanel, BorderLayout.CENTER);
         headerRow.add(dairyNameLabel, BorderLayout.EAST);
         left.add(headerRow, BorderLayout.NORTH);
+        formContainer = left;
         left.add(buildForm(), BorderLayout.CENTER);
-        // Fixed opening width; extra window width always goes to the table.
-        left.setPreferredSize(new Dimension(470, 1));
+        // Fixed opening size: the entry form always opens LEFT_PANEL_WIDTH px
+        // wide and can never shrink below that, so every field is visible
+        // properly; extra window width always goes to the table.
+        left.setPreferredSize(new Dimension(LEFT_PANEL_WIDTH, 1));
+        left.setMinimumSize(new Dimension(LEFT_PANEL_WIDTH, 0));
 
         // Right panel: records area with headings, filter and table.
         JPanel right = new JPanel(new BorderLayout(0, 4));
         right.add(buildTableArea(), BorderLayout.CENTER);
 
-        // JSplitPane allows stretching left/right by dragging the divider.
+        // JSplitPane layout: the left entry panel is kept at its fixed width
+        // on every window resize — no dragging needed; all spare width goes
+        // to the records table on the right.
         JSplitPane split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, left, right);
         split.setResizeWeight(0.0);
         split.setContinuousLayout(true);
-        // Apply the fixed form width once the panel has its real size (a
-        // divider location set in the constructor is clamped while size is 0).
+        // A divider location set while the panel has no size yet is clamped,
+        // so (re)apply the fixed width once the panel has its real size and
+        // again on every subsequent resize — the panel always stays fixed.
         addComponentListener(new java.awt.event.ComponentAdapter() {
             @Override
             public void componentResized(java.awt.event.ComponentEvent e) {
-                removeComponentListener(this);
-                split.setDividerLocation(470);
+                split.setDividerLocation(LEFT_PANEL_WIDTH);
             }
         });
 
@@ -279,7 +303,9 @@ public class MilkCollectionPanel extends JPanel {
             customerBanner.revalidate();
             customerBanner.repaint();
         });
-        dateField.setText(DateUtil.toDisplay(LocalDate.now()));
+        datePicker.setDate(LocalDate.now());
+        UIUtil.styleComponent(datePicker.getTextField(), 18);
+        UIUtil.styleComponent(datePicker.getButton(), 18);
         UIUtil.makeUpperCase(customerCodeField);
         // Quantity and FAT accept only integer/fraction values — alphabets
         // and other characters are blocked while typing or pasting.
@@ -305,10 +331,6 @@ public class MilkCollectionPanel extends JPanel {
         cowRadio.setOpaque(false);
         buffaloRadio.setOpaque(false);
         mixRadio.setOpaque(false);
-        UIUtil.styleComponent(dateField, 18);
-        dateField.setEditable(false);
-        dateField.setFocusable(false);
-        dateField.setBackground(UIUtil.DISABLED_BG); // light grey locked field
         String defaultShift = settingsService.get("app.default_shift");
         if ("Evening".equals(defaultShift)) {
             eveningRadio.setSelected(true);
@@ -319,13 +341,10 @@ public class MilkCollectionPanel extends JPanel {
         setSelectedMilkType(defaultMilk);
         rateField.setEditable(false);
         rateField.setFocusable(false);
-        rateField.setBackground(UIUtil.DISABLED_BG); // light grey locked field
         amountField.setEditable(false);
         amountField.setFocusable(false);
-        amountField.setBackground(UIUtil.DISABLED_BG); // light grey locked field
         customerNameField.setEditable(false);
         customerNameField.setFocusable(false);
-        customerNameField.setBackground(UIUtil.DISABLED_BG); // light grey locked field
     }
 
     private JPanel buildForm() {
@@ -362,14 +381,14 @@ public class MilkCollectionPanel extends JPanel {
         // Vertical stack: one field per row, each field spanning the full
         // remaining width of the panel so every value is clearly visible.
         int row = 0;
-        addRow(fieldsPanel, g, row++, "Date:", withLockIcon(dateField, lockedCream));
+        addRow(fieldsPanel, g, row++, "Date:", dateComponent());
         addRow(fieldsPanel, g, row++, "Shift:", shiftPanel());
         addRow(fieldsPanel, g, row++, "Customer Code:", customerCodeField);
         addRow(fieldsPanel, g, row++, "Customer Name:", withLockIcon(customerNameField, lockedCream));
         addRow(fieldsPanel, g, row++, "Milk Type:", milkPanel());
         addRow(fieldsPanel, g, row++, "Quantity (LTR):", quantityField);
         addRow(fieldsPanel, g, row++, "FAT (%):", fatField);
-        addRow(fieldsPanel, g, row++, "Rate / LTR:", withLockIcon(rateField, lockedCream));
+        addRow(fieldsPanel, g, row++, "Rate / LTR:", rateComponent());
         addRow(fieldsPanel, g, row++, "Amount:", withLockIcon(amountField, lockedCream));
         addRow(fieldsPanel, g, row++, "Remarks:", remarksField);
 
@@ -381,12 +400,40 @@ public class MilkCollectionPanel extends JPanel {
         // Enter in customer code loads the customer; the same lookup also runs
         // when the field loses focus (Tab out or click elsewhere), so both the
         // Enter key and moving out of the field load the customer details.
+        // Listeners are attached once — buildForm() re-runs on every
+        // refreshForm() and re-adding them would fire the lookup/recalc
+        // multiple times per keystroke event.
+        if (!fieldListenersAttached) {
+            fieldListenersAttached = true;
+            attachFieldListeners();
+        }
+        // Fixed-width entry panel: wrap the fields in a vertical scroll pane
+        // so every field stays fully visible and usable — when the window is
+        // short, the fields scroll instead of being squeezed or clipped.
+        JScrollPane formScroll = new JScrollPane(fieldsPanel);
+        formScroll.setBorder(null);
+        formScroll.setHorizontalScrollBarPolicy(javax.swing.ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
+        formScroll.getVerticalScrollBar().setUnitIncrement(16);
+        form.add(formScroll, BorderLayout.CENTER);
+        form.add(buttonPanel, BorderLayout.SOUTH);
+        return form;
+    }
+
+    /** Attaches the one-time field listeners (lookup, recalculation). */
+    private void attachFieldListeners() {
         customerCodeField.addActionListener(e -> loadCustomer());
         customerCodeField.addFocusListener(new java.awt.event.FocusAdapter() {
             @Override
             public void focusLost(java.awt.event.FocusEvent e) {
                 String code = customerCodeField.getText().trim();
                 if (code.isEmpty()) {
+                    return;
+                }
+                // Skip when focus moves to a Save/Update button — saving does
+                // its own silent lookup; otherwise the button click would pop
+                // the "customer not found" dialog before the save even starts.
+                Object opposite = e.getOppositeComponent();
+                if (opposite == savePrintButton || opposite == updatePrintButton) {
                     return;
                 }
                 boolean alreadyLoaded = selectedCustomer != null
@@ -408,9 +455,6 @@ public class MilkCollectionPanel extends JPanel {
         fatField.addActionListener(e -> recalc());
         quantityField.addFocusListener(recalcAdapter);
         fatField.addFocusListener(recalcAdapter);
-        form.add(fieldsPanel, BorderLayout.CENTER);
-        form.add(buttonPanel, BorderLayout.SOUTH);
-        return form;
     }
 
     /** Adds one label + full-width field row to a two-column vertical form. */
@@ -452,6 +496,13 @@ public class MilkCollectionPanel extends JPanel {
     /**
      * Styles every action button with the same look as the Customer Details page.
      */
+    /**
+     * Styles every action button with the same look as the Customer Details page.
+     * Listeners are attached exactly once: buildForm() re-runs on every
+     * refreshForm(), and re-adding listeners would fire saveAndPrint() multiple
+     * times per click — the extra fires hit the already-reset form and popped a
+     * bogus "enter a valid customer code" dialog after a successful save.
+     */
     private void styleActionButtons() {
         UIUtil.styleSmallButton(newButton, new Color(0x1976D2)); // blue
         UIUtil.styleSmallButton(savePrintButton, new Color(0x2E7D32)); // green
@@ -464,6 +515,10 @@ public class MilkCollectionPanel extends JPanel {
         updatePrintButton.setIcon(dairy.erp.util.ButtonIcons.of("Refresh", Color.WHITE));
         deleteButton.setIcon(dairy.erp.util.ButtonIcons.of("Trash", Color.WHITE));
         clearButton.setIcon(dairy.erp.util.ButtonIcons.of("Cross", Color.WHITE));
+        if (actionListenersAttached) {
+            return;
+        }
+        actionListenersAttached = true;
         newButton.addActionListener(e -> resetForm());
         savePrintButton.addActionListener(e -> saveAndPrint());
         updatePrintButton.addActionListener(e -> updateAndPrint());
@@ -500,6 +555,29 @@ public class MilkCollectionPanel extends JPanel {
     public void setMode(String mode) {
         historyMode = "history".equals(mode);
         rebuildButtons();
+        refreshForm();
+    }
+
+    /**
+     * Rebuilds the entry form so that the Date and Rate fields reflect the
+     * current "Allow Collection Date Adjustment" and "Allow Rate Adjustment"
+     * settings. Called every time the panel is shown via setMode().
+     */
+    private void refreshForm() {
+        if (formContainer == null) {
+            return;
+        }
+        // Remove the old form (it sits in the CENTER of formContainer).
+        java.awt.Component[] comps = formContainer.getComponents();
+        for (java.awt.Component c : comps) {
+            if (BorderLayout.CENTER.equals(((java.awt.BorderLayout) formContainer.getLayout()).getConstraints(c))) {
+                formContainer.remove(c);
+                break;
+            }
+        }
+        formContainer.add(buildForm(), BorderLayout.CENTER);
+        formContainer.revalidate();
+        formContainer.repaint();
     }
 
     /**
@@ -570,19 +648,83 @@ public class MilkCollectionPanel extends JPanel {
      * its right edge, exactly like the reference design, and paints the field
      * in the darker cream locked colour.
      */
-    private javax.swing.JComponent withLockIcon(javax.swing.JTextField field, Color lockedBg) {
-        field.setBackground(lockedBg);
+    private javax.swing.JComponent withLockIcon(javax.swing.JTextField field, Color ignored) {
         field.setEditable(false);
         field.setFocusable(false);
-        javax.swing.JPanel p = new javax.swing.JPanel(new BorderLayout());
-        p.setOpaque(false);
-        p.add(field, BorderLayout.CENTER);
-        javax.swing.JLabel lock = new javax.swing.JLabel(
-                dairy.erp.util.ButtonIcons.of("Lock", new Color(0x8a, 0x93, 0x9c)));
-        lock.setBorder(BorderFactory.createEmptyBorder(0, 4, 0, 4));
-        lock.setOpaque(false);
-        p.add(lock, BorderLayout.EAST);
-        return p;
+        // Keep the original border and overlay the lock icon inside the field.
+        // Guard against stacking multiple lock borders when the form is rebuilt.
+        Border current = field.getBorder();
+        if (current instanceof javax.swing.border.CompoundBorder) {
+            javax.swing.border.CompoundBorder cb = (javax.swing.border.CompoundBorder) current;
+            if (cb.getInsideBorder() instanceof LockIconBorder
+                    || cb.getOutsideBorder() instanceof LockIconBorder) {
+                return field; // lock icon already present
+            }
+        }
+        field.setBorder(BorderFactory.createCompoundBorder(current, new LockIconBorder()));
+        return field;
+    }
+
+    /**
+     * Returns the Date field component: the calendar picker when
+     * "Allow Collection Date Adjustment" is true, or a locked text field
+     * showing today's date when false. The text field columns and button
+     * size are tuned so the overall width matches the other form fields.
+     */
+    private JComponent dateComponent() {
+        boolean editable = settingsService.getBoolean("app.allow_date_adjustment", false);
+        if (editable) {
+            datePicker.getTextField().setColumns(10);
+            datePicker.getButton().setPreferredSize(new java.awt.Dimension(30, 28));
+            return datePicker;
+        }
+        // Locked: show the date as a disabled text field with padlock icon.
+        JTextField lockedField = new JTextField(DateUtil.toDisplay(LocalDate.now()), 10);
+        lockedField.setEditable(false);
+        lockedField.setFocusable(false);
+        UIUtil.styleComponent(lockedField, 18);
+        return withLockIcon(lockedField, null);
+    }
+
+    /**
+     * Returns the Rate field component: editable when "Allow Rate Adjustment"
+     * is true, or a locked field showing the auto-calculated rate when false.
+     */
+    private JComponent rateComponent() {
+        boolean editable = settingsService.getBoolean("app.allow_rate_adjustment", false);
+        if (editable) {
+            rateField.setEditable(true);
+            rateField.setFocusable(true);
+            rateField.setBackground(Color.WHITE);
+            return rateField;
+        }
+        rateField.setEditable(false);
+        rateField.setFocusable(false);
+        return withLockIcon(rateField, null);
+    }
+
+    /**
+     * A custom border that paints a small padlock icon inside the trailing
+     * edge of a text field, visually indicating a locked/read-only field.
+     * Used as the inner border of a CompoundBorder (outer = original field border).
+     */
+    private static class LockIconBorder extends javax.swing.border.AbstractBorder {
+        private static final int ICON_W = 18;
+        private static final int ICON_H = 18;
+        private static final int PAD = 4;
+        private static final Icon LOCK = dairy.erp.util.ButtonIcons.of("Lock", new Color(0x8a, 0x93, 0x9c));
+
+        @Override
+        public java.awt.Insets getBorderInsets(java.awt.Component c) {
+            return new java.awt.Insets(0, 0, 0, ICON_W + PAD * 2);
+        }
+
+        @Override
+        public void paintBorder(java.awt.Component c, java.awt.Graphics g, int x, int y, int w, int h) {
+            int iconX = x + w - ICON_W - PAD;
+            int iconY = y + (h - ICON_H) / 2;
+            LOCK.paintIcon(c, g, iconX, iconY);
+        }
     }
 
     /**
@@ -717,6 +859,22 @@ public class MilkCollectionPanel extends JPanel {
     // ---- customer loading and calculation ----
 
     private void loadCustomer() {
+        // Re-entrancy guard: the lookup itself moves focus (quantityField),
+        // which re-fires the code field's focusLost listener. Without this
+        // guard one wrong code could pop the "not found" dialog repeatedly.
+        if (inLookup) {
+            return;
+        }
+        inLookup = true;
+        try {
+            doLoadCustomer();
+        } finally {
+            inLookup = false;
+        }
+    }
+
+    /** Body of {@link #loadCustomer()}, run under the re-entrancy guard. */
+    private void doLoadCustomer() {
         String code = customerCodeField.getText().trim();
         if (ValidationUtil.isBlank(code)) {
             return;
@@ -735,14 +893,40 @@ public class MilkCollectionPanel extends JPanel {
         selectedCustomer = c;
         customerNameField.setText(c.getCustomerName());
         updateBanner();
+        // Only auto-set milk type for new entries — never override the user's
+        // selection when editing an existing record.
+        if (editingId == -1 && c.getMilkType() != null) {
+            setSelectedMilkType(c.getMilkType());
+        }
         if ("Inactive".equals(c.getStatus())) {
             UIUtil.showMessage(this,
                     "This customer is inactive.", "Customer", JOptionPane.WARNING_MESSAGE);
         }
-        if (c.getMilkType() != null) {
+        quantityField.requestFocusInWindow();
+    }
+
+    /**
+     * Silently resolves the customer code typed in the code field — no dialogs.
+     * Used by {@link #saveRecord()} so that saving never pops the customer
+     * dialog; validation handles an unresolvable code with one message.
+     */
+    private void loadCustomerSilently() {
+        String code = customerCodeField.getText().trim();
+        if (ValidationUtil.isBlank(code)) {
+            return;
+        }
+        Customer c = service.findCustomerByCode(code);
+        if (c == null) {
+            return;
+        }
+        selectedCustomer = c;
+        customerNameField.setText(c.getCustomerName());
+        updateBanner();
+        // Only auto-set milk type for new entries — never override the user's
+        // selection when editing an existing record.
+        if (editingId == -1 && c.getMilkType() != null) {
             setSelectedMilkType(c.getMilkType());
         }
-        quantityField.requestFocusInWindow();
     }
 
     /**
@@ -777,9 +961,9 @@ public class MilkCollectionPanel extends JPanel {
             amountField.setText("");
             return;
         }
-        boolean manualOverride = settingsService.getBoolean("app.manual_rate_override", false);
+        boolean manualOverride = settingsService.getBoolean("app.allow_rate_adjustment", false);
         BigDecimal manualRate = ValidationUtil.parseDecimal(rateField.getText());
-        LocalDate date = DateUtil.parse(dateField.getText());
+        LocalDate date = datePicker.getDate();
         if (date == null) {
             date = LocalDate.now();
         }
@@ -807,12 +991,27 @@ public class MilkCollectionPanel extends JPanel {
      * {@code null} when validation/saving failed or a duplicate exists.
      */
     private MilkCollection saveRecord() {
+        // Nothing entered at all — e.g. a double-click fired the Save action
+        // twice: the first click saved and reset the form, so the second must
+        // not pop a "enter a valid customer code" validation dialog.
+        if (selectedCustomer == null
+                && ValidationUtil.isBlank(customerCodeField.getText())
+                && ValidationUtil.isBlank(quantityField.getText())) {
+            return null;
+        }
+        // Resolve the typed code silently (no dialogs) when the user clicked
+        // Save without pressing Enter/tabbing out of the code field. A wrong
+        // code is reported once by validateForm() below — saving must never
+        // pop the "customer not found" dialog by itself.
+        if (selectedCustomer == null) {
+            loadCustomerSilently();
+        }
         String error = validateForm();
         if (!error.isEmpty()) {
             UIUtil.showMessage(this, error, "Validation", JOptionPane.WARNING_MESSAGE);
             return null;
         }
-        LocalDate date = DateUtil.parse(dateField.getText());
+        LocalDate date = datePicker.getDate();
         String shift = getSelectedShift();
         BigDecimal qty = ValidationUtil.parseDecimal(quantityField.getText());
         BigDecimal fat = ValidationUtil.parseDecimal(fatField.getText());
@@ -820,7 +1019,7 @@ public class MilkCollectionPanel extends JPanel {
         BigDecimal snf = defaultSnf();
 
         // Recompute authoritative values (regardless of manual edits).
-        boolean manualOverride = settingsService.getBoolean("app.manual_rate_override", false);
+        boolean manualOverride = settingsService.getBoolean("app.allow_rate_adjustment", false);
         BigDecimal manualRate = ValidationUtil.parseDecimal(rateField.getText());
         MilkCollectionService.CalculationResult result = service.calculate(
                 selectedCustomer, date, shift, getSelectedMilkType(),
@@ -916,7 +1115,7 @@ public class MilkCollectionPanel extends JPanel {
         editingId = mc.getId();
         customerCodeField.setText(c.getCustomerCode());
         customerNameField.setText(c.getCustomerName());
-        dateField.setText(DateUtil.toDisplay(DateUtil.parse((String) tableModel.getValueAt(row, 0))));
+        datePicker.setDate(DateUtil.parse((String) tableModel.getValueAt(row, 0)));
         selectShift((String) tableModel.getValueAt(row, 1));
         setSelectedMilkType((String) tableModel.getValueAt(row, 4));
         fatField.setText(((String) tableModel.getValueAt(row, 5)).replace(",", ""));
@@ -944,7 +1143,7 @@ public class MilkCollectionPanel extends JPanel {
     }
 
     private String validateForm() {
-        if (DateUtil.parse(dateField.getText()) == null) {
+        if (datePicker.getDate() == null) {
             return "A valid date (dd-MM-yyyy) is required.";
         }
         if (selectedCustomer == null) {
@@ -978,7 +1177,6 @@ public class MilkCollectionPanel extends JPanel {
         amountField.setText("");
         remarksField.setText("");
         updateBanner();
-        customerCodeField.requestFocusInWindow();
     }
 
     public void resetForm() {
@@ -991,9 +1189,8 @@ public class MilkCollectionPanel extends JPanel {
         rateField.setText("");
         amountField.setText("");
         remarksField.setText("");
-        dateField.setText(DateUtil.toDisplay(LocalDate.now()));
+        datePicker.setDate(LocalDate.now());
         updateBanner();
-        customerCodeField.requestFocusInWindow();
     }
 
       private void printSlip(MilkCollection m) {
@@ -1051,7 +1248,7 @@ public class MilkCollectionPanel extends JPanel {
 
         // Footer
         //lines.add(new PrintUtil.StyledLine(border, bodyFont));
-        lines.add(new PrintUtil.StyledLine(centerPad("--------- E&OE ---------", slipWidth), smallFont));
+        lines.add(new PrintUtil.StyledLine(centerPad("---------- E&OE ----------", slipWidth), smallFont));
         lines.add(new PrintUtil.StyledLine(centerPad(softwareName.toUpperCase(), slipWidth), smallFont));
         lines.add(new PrintUtil.StyledLine(centerPad("Thank You", slipWidth), smallFont));
 

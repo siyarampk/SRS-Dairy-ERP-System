@@ -128,7 +128,11 @@ public class CustomerDAO {
     }
 
     public String lastCustomerCode() throws SQLException {
-        String sql = "SELECT customer_code FROM customers ORDER BY id DESC LIMIT 1";
+        // Highest numeric code so far — immune to out-of-order insertion or
+        // trailing non-numeric codes; codes are never reused.
+        String sql = "SELECT customer_code FROM customers " +
+                "WHERE TRIM(customer_code) GLOB '[0-9]*' " +
+                "ORDER BY CAST(TRIM(customer_code) AS INTEGER) DESC LIMIT 1";
         try (Connection conn = DatabaseManager.getConnection();
              Statement st = conn.createStatement();
              ResultSet rs = st.executeQuery(sql)) {
