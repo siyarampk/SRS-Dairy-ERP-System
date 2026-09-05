@@ -28,8 +28,16 @@ try {
 
     Write-Host "=== Packaging dist/DairyERP.jar ==="
     Set-Content -Path dist\manifest.txt -Value "Main-Class: dairy.erp.Main`r`nClass-Path: lib/sqlite-jdbc-3.45.3.0.jar lib/slf4j-api-1.7.36.jar lib/slf4j-nop-1.7.36.jar`r`n" -Encoding ASCII
-    & jar cfm dist\DairyERP.jar dist\manifest.txt -C out .
-    if ($LASTEXITCODE -ne 0) { throw "jar failed with exit code $LASTEXITCODE" }
+    # Antivirus (e.g. AVG File Shield) can hold the previous jar open for a
+    # while, which makes jar's replace step fail. Retry a few times.
+    $jarOk = $false
+    for ($attempt = 1; $attempt -le 6; $attempt++) {
+        & jar cfm dist\DairyERP.jar dist\manifest.txt -C out .
+        if ($LASTEXITCODE -eq 0) { $jarOk = $true; break }
+        Write-Host ("jar attempt {0} failed (file may be locked by antivirus) - retrying in 5s" -f $attempt)
+        Start-Sleep -Seconds 5
+    }
+    if (-not $jarOk) { throw "jar failed after 6 attempts (dist\DairyERP.jar is locked - check antivirus exclusions)" }
     Remove-Item dist\manifest.txt -Force
     Get-Item dist\DairyERP.jar | Select-Object FullName, Length, LastWriteTime | Format-List | Write-Host
 

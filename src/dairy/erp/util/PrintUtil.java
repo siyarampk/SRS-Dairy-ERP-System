@@ -1,53 +1,59 @@
 package dairy.erp.util;
 
 import java.awt.Color;
-import java.awt.Desktop;
 import java.awt.Font;
 import java.awt.FontMetrics;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.RenderingHints;
 import java.awt.print.PageFormat;
+import java.awt.print.Paper;
 import java.awt.print.Printable;
 import java.awt.print.PrinterException;
 import java.awt.print.PrinterJob;
-import java.io.File;
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.io.OutputStream;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
-import javax.print.attribute.standard.PrinterIsAcceptingJobs;
-import javax.print.attribute.standard.PrinterState;
-import javax.swing.JFileChooser;                 
+import java.util.Locale;
+import javax.print.PrintService;
+import javax.print.PrintServiceLookup;
+import javax.print.attribute.HashPrintRequestAttributeSet;
+import javax.print.attribute.PrintRequestAttributeSet;
+import javax.print.attribute.standard.OrientationRequested;
 import javax.swing.JOptionPane;
-import javax.swing.filechooser.FileNameExtensionFilter;
 
 
 /**
- * Prints plain-text reports using the standard java.awt.print APIs. A simple
- * text-lines Printable is used; no external reporting framework.
+ * Prints plain-text reports using the standard java.awt.print APIs.
+ *
+ * IMPORTANT:
+ *  - Never falls back to "Save as PDF / Save to file".
+ *  - Always targets a REAL physical printer (virtual printers like
+ *    "Microsoft Print to PDF" are skipped — they are what caused the
+ *    "Save print output as" dialog).
+ *  - For slip/roll printers the page height is fitted exactly to the
+ *    content, and the raw eject sets the form length (ESC C n) BEFORE
+ *    the Form Feed so the LQ-310 stops/tears off right after the slip
+ *    instead of rolling a full blank page.
  */
 public final class PrintUtil {
 
     private PrintUtil() {
     }
 
-    private static final float LEFT_MARGIN = 12f; // Changed from 20f
+    private static final float LEFT_MARGIN = 12f;
 
-    /**
-     * Prints the given text lines with a caller-supplied font and left margin.
-     * Used by the milk slip to render in a heavier-weight monospaced font
-     * closer to the left edge.
-     */
+    // ------------------------------------------------------------------
+    // Dialog-based printing (reports etc.)
+    // ------------------------------------------------------------------
+
     public static boolean printText(java.awt.Frame owner, String title, List<String> lines,
             boolean preview, Font font, float leftMargin) {
         TextDocument doc = new TextDocument(lines, font, leftMargin);
         try {
             PrinterJob job = PrinterJob.getPrinterJob();
             job.setJobName(title);
+            preselectPhysicalPrinter(job);
             job.setPrintable(doc, doc.pageFormat());
             if (!job.printDialog()) {
                 return false;
@@ -55,24 +61,19 @@ public final class PrintUtil {
             job.print();
             return true;
         } catch (PrinterException e) {
-            UIUtil.showMessage(owner,
-                    "Printing failed: " + e.getMessage(),
+            UIUtil.showMessage(owner, "Printing failed: " + e.getMessage(),
                     "Print", JOptionPane.ERROR_MESSAGE);
             return false;
         }
     }
 
-    /**
-     * Prints the given text lines. When {@code preview} is true the standard
-     * print dialog's preview is shown; otherwise it prints directly.
-     *
-     * @return true if the job was printed (or previewed and confirmed)
-     */
-    public static boolean printText(java.awt.Frame owner, String title, List<String> lines, boolean preview) {
+    public static boolean printText(java.awt.Frame owner, String title,
+            List<String> lines, boolean preview) {
         TextDocument doc = new TextDocument(lines);
         try {
             PrinterJob job = PrinterJob.getPrinterJob();
             job.setJobName(title);
+            preselectPhysicalPrinter(job);
             job.setPrintable(doc, doc.pageFormat());
             if (!job.printDialog()) {
                 return false;
@@ -80,31 +81,23 @@ public final class PrintUtil {
             job.print();
             return true;
         } catch (PrinterException e) {
-            UIUtil.showMessage(owner,
-                    "Printing failed: " + e.getMessage(),
+            UIUtil.showMessage(owner, "Printing failed: " + e.getMessage(),
                     "Print", JOptionPane.ERROR_MESSAGE);
             return false;
         }
     }
 
-    /** Wraps a list of text lines as a {@link Printable}. */
     public static Printable asPrintable(List<String> lines) {
         return new TextDocument(lines);
     }
 
-    /**
-     * Prints the given styled lines (each with its own font) using the standard
-     * print dialog. Allows mixing font sizes within a single print job — e.g. a
-     * larger dairy-name header with smaller data rows on a thermal slip.
-     *
-     * @return true if the job was printed (or previewed and confirmed)
-     */
     public static boolean printText(java.awt.Frame owner, String title,
             Collection<StyledLine> styledLines, boolean preview) {
         TextDocument doc = new TextDocument(styledLines);
         try {
             PrinterJob job = PrinterJob.getPrinterJob();
             job.setJobName(title);
+            preselectPhysicalPrinter(job);
             job.setPrintable(doc, doc.pageFormat());
             if (!job.printDialog()) {
                 return false;
@@ -112,8 +105,7 @@ public final class PrintUtil {
             job.print();
             return true;
         } catch (PrinterException e) {
-            UIUtil.showMessage(owner,
-                    "Printing failed: " + e.getMessage(),
+            UIUtil.showMessage(owner, "Printing failed: " + e.getMessage(),
                     "Print", JOptionPane.ERROR_MESSAGE);
             return false;
         }
@@ -125,6 +117,7 @@ public final class PrintUtil {
         try {
             PrinterJob job = PrinterJob.getPrinterJob();
             job.setJobName(title);
+            preselectPhysicalPrinter(job);
             job.setPrintable(doc, pageFormat);
             if (!job.printDialog()) {
                 return false;
@@ -132,220 +125,252 @@ public final class PrintUtil {
             job.print();
             return true;
         } catch (PrinterException e) {
-            UIUtil.showMessage(owner,
-                    "Printing failed: " + e.getMessage(),
+            UIUtil.showMessage(owner, "Printing failed: " + e.getMessage(),
                     "Print", JOptionPane.ERROR_MESSAGE);
             return false;
         }
     }
 
-     public static boolean printTextDirect(java.awt.Frame owner, String title,
+    // ------------------------------------------------------------------
+    // Direct (no-dialog) slip printing
+    // ------------------------------------------------------------------
+
+    /**
+     * Prints directly to the physical printer with the caller's PageFormat.
+     * The pageFormat height SHOULD be fitted to the content (see
+     * {@link #createSlipPageFormat}) so the roll stops after the slip.
+     */
+    public static boolean printTextDirect(java.awt.Frame owner, String title,
             Collection<StyledLine> styledLines, PageFormat pageFormat) {
 
-        System.out.println("[PrintUtil] Looking for printer...");
+        System.out.println("[PrintUtil] Initializing direct print...");
 
-        javax.print.PrintService ps = javax.print.PrintServiceLookup.lookupDefaultPrintService();
+        // FIX: never accept a virtual printer ("Microsoft Print to PDF",
+        // XPS, OneNote, Fax...) — those pop a "Save print output as" dialog.
+        PrintService ps = resolvePhysicalPrinter();
         if (ps == null) {
-            javax.print.PrintService[] all = javax.print.PrintServiceLookup.lookupPrintServices(null, null);
-            if (all != null && all.length > 0) {
-                ps = all[0];
-                System.out.println("[PrintUtil] Using first available printer: " + ps.getName());
-            }
+            UIUtil.showMessage(owner,
+                    "No physical printer was found on this computer.\n\n"
+                  + "Please install/connect a printer (and set it as default), then try again.",
+                    "Print", JOptionPane.ERROR_MESSAGE);
+            return false;
         }
-
-        // Case 1: no printer installed/found at all.
-        if (ps == null) {
-            System.out.println("[PrintUtil] ❌ No printer found — opening PDF save dialog.");
-            return saveAsPdf(owner, title, styledLines, pageFormat);
-        }
-
-        System.out.println("[PrintUtil] Printer found: " + ps.getName());
-
-        // Case 2: a printer is configured but currently offline / not accepting jobs.
-        if (isPrinterOffline(ps)) {
-            System.out.println("[PrintUtil]  Printer is offline — opening PDF save dialog.");
-            return saveAsPdf(owner, title, styledLines, pageFormat);
-        }
+        System.out.println("[PrintUtil] Sending job to physical printer: " + ps.getName());
 
         TextDocument doc = new TextDocument(styledLines);
         try {
             PrinterJob job = PrinterJob.getPrinterJob();
             job.setPrintService(ps);
-            System.out.println("[PrintUtil] ✓ Printing to: " + ps.getName());
             job.setJobName(title);
             job.setPrintable(doc, pageFormat);
-            job.print();
+
+            PrintRequestAttributeSet attrs = new HashPrintRequestAttributeSet();
+            attrs.add(OrientationRequested.PORTRAIT);
+
+            // Always spool — if the printer is off, the OS queue holds the
+            // job and prints it when the printer comes back online.
+            System.out.println("[PrintUtil] Spooling slip content...");
+            job.print(attrs);
+
+            // Eject with form length fitted to THIS slip's height so the
+            // LQ-310 tears off right after the content (no full-page roll).
+            forcePaperEject(ps, pageFormat.getHeight() / 72.0);
+
             return true;
+
         } catch (Exception e) {
-            // Case 3: printer looked available but failed at print time
-            e.printStackTrace();
-            System.out.println("[PrintUtil] ❌ Print failed (" + e.getMessage() + ") — opening PDF save dialog.");
-            return saveAsPdf(owner, title, styledLines, pageFormat);
-        }
-    }
-    /**
-     * Returns true when the given print service reports itself as not
-     * accepting jobs or in a stopped/error state — i.e. plugged in/installed
-     * but effectively offline (powered off, disconnected, out of paper/jam, etc.).
-     */
-    private static boolean isPrinterOffline(javax.print.PrintService ps) {
-        try {
-            System.out.println("[PrintUtil] Checking printer status for: " + ps.getName());
-
-            PrinterIsAcceptingJobs accepting = (PrinterIsAcceptingJobs) ps.getAttribute(PrinterIsAcceptingJobs.class);
-
-            // FIXED: Check for null before comparing
-            if (accepting != null && accepting == PrinterIsAcceptingJobs.NOT_ACCEPTING_JOBS) {
-                System.out.println("[PrintUtil] Printer NOT_ACCEPTING_JOBS");
-                return true;
-            }
-
-            PrinterState state = (PrinterState) ps.getAttribute(PrinterState.class);
-            if (state != null && state == PrinterState.STOPPED) {
-                System.out.println("[PrintUtil] Printer STOPPED");
-                return true;
-            }
-
-            System.out.println("[PrintUtil] Printer appears online");
-        } catch (Exception e) {
-            System.out.println("[PrintUtil] Could not check printer status: " + e.getMessage());
-        }
-        return false;
-    }
-   
-    private static boolean saveAsPdf(java.awt.Frame owner, String title,
-            Collection<StyledLine> styledLines, PageFormat pageFormat) {
-        try {
-            System.out.println("[PrintUtil] Opening PDF save dialog...");
-
-            String stamp = java.time.LocalDateTime.now()
-                    .format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
-            String safeTitle = title == null ? "Slip" : title.replaceAll("[^a-zA-Z0-9]+", "_");
-            String defaultName = safeTitle + "_" + stamp + ".pdf";
-
-            JFileChooser chooser = new JFileChooser();
-            chooser.setDialogTitle("Printer not available — Save Slip as PDF");
-            chooser.setSelectedFile(new File(defaultName));
-            chooser.setFileFilter(new FileNameExtensionFilter("PDF Files (*.pdf)", "pdf"));
-
-            System.out.println("[PrintUtil] Showing save dialog...");
-            int result = chooser.showSaveDialog(owner);
-            System.out.println("[PrintUtil] Dialog result: " + result);
-
-            if (result != JFileChooser.APPROVE_OPTION) {
-                System.out.println("[PrintUtil] User cancelled save dialog");
-                return false;
-            }
-
-            File file = chooser.getSelectedFile();
-            if (file == null) {
-                System.out.println("[PrintUtil] No file selected");
-                return false;
-            }
-
-            // Ensure the .pdf extension is present
-            if (!file.getName().toLowerCase(java.util.Locale.ROOT).endsWith(".pdf")) {
-                file = new File(file.getParentFile(), file.getName() + ".pdf");
-            }
-
-            System.out.println("[PrintUtil] Saving PDF to: " + file.getAbsolutePath());
-            writeSimplePdf(file, styledLines, pageFormat);
-
-            UIUtil.showMessage(owner,
-                    "No printer available. The slip has been saved as a PDF:\n"
-                            + file.getAbsolutePath(),
-                    "Saved as PDF", JOptionPane.INFORMATION_MESSAGE);
-
-            try {
-                if (Desktop.isDesktopSupported()
-                        && Desktop.getDesktop().isSupported(Desktop.Action.OPEN)) {
-                    Desktop.getDesktop().open(file);
-                }
-            } catch (Exception ignore) {
-                // Ignore if no PDF viewer registered
-            }
-            return true;
-        } catch (Exception e) {
+            // FIX: report the error — NEVER prompt to save a file.
             e.printStackTrace();
             UIUtil.showMessage(owner,
-                    "Could not save the slip as PDF: " + e.getMessage(),
+                    "Could not print to printer '" + ps.getName() + "'.\n\n"
+                  + "Error: " + e.getMessage() + "\n\n"
+                  + "Check that the printer is powered on, connected and has paper, "
+                  + "then try again.",
                     "Print", JOptionPane.ERROR_MESSAGE);
             return false;
         }
     }
 
-    private static void writeSimplePdf(File file, Collection<StyledLine> styledLines,
-            PageFormat pageFormat) throws IOException {
-        double widthPt = pageFormat.getWidth();
-        double heightPt = pageFormat.getHeight();
-        double marginX = pageFormat.getImageableX();
-        double marginY = pageFormat.getImageableY();
+    /**
+     * Convenience method for roll slips: builds a PageFormat whose HEIGHT is
+     * fitted exactly to the supplied lines (no fixed 5"/8" page), then prints
+     * directly.
+     *
+     * @param widthInches roll width, e.g. 2.5 for a 2.5 inch / 64 mm roll
+     */
+    public static boolean printSlipDirect(java.awt.Frame owner, String title,
+            Collection<StyledLine> lines, double widthInches) {
+        return printTextDirect(owner, title, lines,
+                createSlipPageFormat(lines, widthInches, 6.0, 4.0));
+    }
 
-        StringBuilder content = new StringBuilder();
-        content.append("BT\n");
-        double y = heightPt - marginY - 12; // start near the top of the imageable area
-        for (StyledLine line : styledLines) {
-            int size = Math.max(6, line.getFont().getSize());
-            content.append("/F1 ").append(size).append(" Tf\n");
-            content.append(String.format(java.util.Locale.US, "1 0 0 1 %.2f %.2f Tm\n", marginX, y));
-            content.append("(").append(escapePdfText(line.getText())).append(") Tj\n");
-            y -= size + 2;
-        }
-        content.append("ET\n");
-        byte[] contentBytes = content.toString().getBytes(StandardCharsets.ISO_8859_1);
+    /**
+     * Builds a PageFormat for a roll slip with the paper height measured from
+     * the actual content (same 0.85 line-spacing compacting as the renderer).
+     */
+    public static PageFormat createSlipPageFormat(Collection<StyledLine> lines,
+            double widthInches, double marginXPt, double marginYPt) {
+        double widthPt = widthInches * 72.0;
 
-        try (OutputStream raw = new FileOutputStream(file)) {
-            java.util.List<Integer> offsets = new java.util.ArrayList<>();
-            StringBuilder pdf = new StringBuilder();
-            pdf.append("%PDF-1.4\n");
-
-            offsets.add(pdf.length());
-            pdf.append("1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n");
-
-            offsets.add(pdf.length());
-            pdf.append("2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n");
-
-            offsets.add(pdf.length());
-            pdf.append("3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ")
-                    .append(String.format(java.util.Locale.US, "%.2f %.2f", widthPt, heightPt))
-                    .append("] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>\nendobj\n");
-
-            offsets.add(pdf.length());
-            pdf.append("4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Courier-Bold >>\nendobj\n");
-
-            offsets.add(pdf.length());
-            pdf.append("5 0 obj\n<< /Length ").append(contentBytes.length).append(" >>\nstream\n")
-                    .append(content)
-                    .append("endstream\nendobj\n");
-
-            int xrefStart = pdf.length();
-            pdf.append("xref\n0 ").append(offsets.size() + 1).append("\n");
-            pdf.append("0000000000 65535 f \n");
-            for (int off : offsets) {
-                pdf.append(String.format("%010d 00000 n \n", off));
+        // Measure the rendered height of every line.
+        java.awt.image.BufferedImage scratch =
+                new java.awt.image.BufferedImage(1, 1, java.awt.image.BufferedImage.TYPE_INT_RGB);
+        Graphics2D mg = scratch.createGraphics();
+        float y = 8f; // same top padding as TextDocument.print()
+        if (lines != null) {
+            for (StyledLine line : lines) {
+                Font f = line.getFont();
+                mg.setFont(f);
+                FontMetrics fm = mg.getFontMetrics(f);
+                y += fm.getHeight() * 0.85f; // matches renderer line spacing
             }
-            pdf.append("trailer\n<< /Size ").append(offsets.size() + 1).append(" /Root 1 0 R >>\n");
-            pdf.append("startxref\n").append(xrefStart).append("\n%%EOF");
+        }
+        mg.dispose();
 
-            raw.write(pdf.toString().getBytes(StandardCharsets.ISO_8859_1));
+        double heightPt = Math.ceil(y + marginYPt + 6.0); // small bottom pad for tear-off
+
+        Paper paper = new Paper();
+        paper.setSize(widthPt, heightPt);
+        paper.setImageableArea(marginXPt, marginYPt,
+                widthPt - (marginXPt * 2.0),
+                heightPt - (marginYPt * 2.0));
+
+        PageFormat pf = new PageFormat();
+        pf.setPaper(paper);
+        pf.setOrientation(PageFormat.PORTRAIT);
+
+        System.out.println("[PrintUtil] Slip page fitted: "
+                + String.format(Locale.US, "%.2f", widthPt) + " x "
+                + String.format(Locale.US, "%.2f", heightPt) + " pt ("
+                + String.format(Locale.US, "%.2f", heightPt / 72.0) + " in tall)");
+        return pf;
+    }
+
+    // ------------------------------------------------------------------
+    // Printer selection
+    // ------------------------------------------------------------------
+
+    private static PrintService resolvePhysicalPrinter() {
+        PrintService def = PrintServiceLookup.lookupDefaultPrintService();
+        if (def != null && isPhysicalPrinter(def)) {
+            return def;
+        }
+        PrintService[] all = PrintServiceLookup.lookupPrintServices(null, null);
+        if (all != null) {
+            for (PrintService ps : all) {
+                if (isPhysicalPrinter(ps)) {
+                    System.out.println("[PrintUtil] Selected physical printer: " + ps.getName());
+                    return ps;
+                }
+            }
+            for (PrintService ps : all) {
+                System.out.println("[PrintUtil] Skipping virtual printer: " + ps.getName());
+            }
+        }
+        return null;
+    }
+
+    private static void preselectPhysicalPrinter(PrinterJob job) {
+        try {
+            PrintService ps = resolvePhysicalPrinter();
+            if (ps != null) {
+                job.setPrintService(ps);
+            }
+        } catch (PrinterException e) {
+            System.out.println("[PrintUtil] Could not preselect printer: " + e.getMessage());
         }
     }
-   
-    private static String escapePdfText(String text) {
-        if (text == null) {
-            return "";
+
+    private static boolean isPhysicalPrinter(PrintService ps) {
+        if (ps == null || ps.getName() == null) {
+            return false;
         }
-        return text.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)");
+        String name = ps.getName().toLowerCase(Locale.ROOT);
+        return !(name.contains("pdf")
+                || name.contains("xps")
+                || name.contains("onenote")
+                || name.contains("one note")
+                || name.contains("fax")
+                || name.contains("document writer")
+                || name.contains("snipping")
+                || name.contains("print to file")
+                || name.contains("save as")
+                || name.contains("adobe pdf")
+                || name.contains("cutepdf")
+                || name.contains("dopdf")
+                || name.contains("bullzip"));
     }
 
-    /** A text line paired with the font it should be rendered in. */
+    // ------------------------------------------------------------------
+    // Raw eject (ESC/P) — fitted to the slip height
+    // ------------------------------------------------------------------
+
+    /**
+     * Sends raw ESC/P bytes to the printer:
+     *   ESC @            -> initialize
+     *   ESC C n          -> set page (form) length to n lines (1/6 inch each)
+     *   FF (0x0C)        -> form feed to the end of THAT short form
+     * Because the form length is set to the slip height first, FF feeds only
+     * the few remaining lines to the tear-off edge instead of rolling a full
+     * A4/letter page.
+     */
+    private static void forcePaperEject(PrintService ps, double slipHeightInches) {
+        try {
+            // 6 lines per inch (default line spacing after ESC @).
+            int lines = (int) Math.rint(slipHeightInches * 6.0);
+            if (lines < 1) {
+                lines = 1;
+            }
+            if (lines > 127) {
+                lines = 127; // ESC C n accepts 1..127
+            }
+
+            byte[] ejectCommand = {
+                    0x1B, 0x40,          // ESC @  initialize printer
+                    0x1B, 0x43, (byte) lines, // ESC C n  set form length in lines
+                    0x0C                 // FF  form feed (to end of short form)
+            };
+
+            java.io.ByteArrayInputStream byteStream =
+                    new java.io.ByteArrayInputStream(ejectCommand);
+
+            javax.print.Doc rawDoc = new javax.print.SimpleDoc(
+                    byteStream,
+                    javax.print.DocFlavor.INPUT_STREAM.AUTOSENSE,
+                    null);
+
+            javax.print.DocPrintJob rawJob = ps.createPrintJob();
+            rawJob.print(rawDoc, (PrintRequestAttributeSet) null);
+
+            System.out.println("[PrintUtil] Eject sent (form length " + lines
+                    + " lines ≈ " + String.format(Locale.US, "%.2f", lines / 6.0)
+                    + " in) - paper stopping at tear-off");
+
+        } catch (Exception e) {
+            System.err.println("[PrintUtil] Eject failed: " + e.getMessage());
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Styled line + printable document
+    // ------------------------------------------------------------------
+
     public static final class StyledLine {
+        public static final int ALIGN_LEFT = 0;
+        public static final int ALIGN_CENTER = 1;
+
         private final String text;
         private final Font font;
+        private final int alignment;
 
         public StyledLine(String text, Font font) {
+            this(text, font, ALIGN_LEFT);
+        }
+
+        public StyledLine(String text, Font font, int alignment) {
             this.text = text == null ? "" : text;
             this.font = font != null ? font : new Font(Font.MONOSPACED, Font.PLAIN, 9);
+            this.alignment = alignment;
         }
 
         public String getText() {
@@ -355,12 +380,15 @@ public final class PrintUtil {
         public Font getFont() {
             return font;
         }
+
+        public int getAlignment() {
+            return alignment;
+        }
     }
 
     private static final class TextDocument implements Printable {
         private final List<StyledLine> styledLines;
         private final float leftMargin;
-        private final boolean centerBlock;
 
         TextDocument(List<String> lines) {
             this(lines, new Font(Font.MONOSPACED, Font.PLAIN, 9), 30f);
@@ -374,18 +402,15 @@ public final class PrintUtil {
                 }
             }
             this.leftMargin = leftMargin;
-            this.centerBlock = false;
         }
 
         TextDocument(Collection<StyledLine> styledLines) {
             this.styledLines = new ArrayList<>(styledLines);
             this.leftMargin = LEFT_MARGIN;
-            this.centerBlock = true;
         }
 
         PageFormat pageFormat() {
-            PrinterJob job = PrinterJob.getPrinterJob();
-            return job.defaultPage();
+            return PrinterJob.getPrinterJob().defaultPage();
         }
 
         @Override
@@ -395,52 +420,45 @@ public final class PrintUtil {
             }
 
             Graphics2D g2 = (Graphics2D) g;
+            g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING,
+                    RenderingHints.VALUE_TEXT_ANTIALIAS_OFF);
+            g2.setRenderingHint(RenderingHints.KEY_FRACTIONALMETRICS,
+                    RenderingHints.VALUE_FRACTIONALMETRICS_OFF);
 
-            // Disable antialiasing for crisp dot-matrix output
-            g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_OFF);
-            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_OFF);
-            g2.setRenderingHint(RenderingHints.KEY_FRACTIONALMETRICS, RenderingHints.VALUE_FRACTIONALMETRICS_OFF);
-
-            // Translate to printable area origin
             g2.translate(pf.getImageableX(), pf.getImageableY());
-
             g2.setColor(Color.BLACK);
 
-            float y = 10f; // Top offset
-            float x = leftMargin; // use the 18pt configured margin (was hardcoded 2f)
+            float y = 8f;
+            float maxX = (float) pf.getImageableWidth();
+            float startX = leftMargin;
 
             for (int i = 0; i < styledLines.size(); i++) {
-                PrintUtil.StyledLine line = styledLines.get(i);
-
+                StyledLine line = styledLines.get(i);
                 Font font = line.getFont();
                 g2.setFont(font);
-
                 FontMetrics fm = g2.getFontMetrics(font);
 
-                // Calculate X position for centering
-                int textWidth = fm.stringWidth(line.getText());
-                float drawX = x;
+                String text = line.getText();
+                float textW = fm.stringWidth(text);
 
-                g2.drawString(line.getText(), drawX, y + fm.getAscent());
+                float drawX;
+                if (line.getAlignment() == StyledLine.ALIGN_CENTER) {
+                    drawX = (maxX - textW) / 2f;
+                    if (drawX < 0) {
+                        drawX = 0;
+                    }
+                } else {
+                    drawX = startX;
+                }
 
-                // Standard line spacing for receipts
-                y += fm.getHeight() + 2f;
-            }
+                g2.drawString(text, drawX, y + fm.getAscent());
+                y += fm.getHeight() * 0.85f;
 
-            return PAGE_EXISTS;
-        }
-
-        /** Returns the rendered width of the widest line for the given fonts. */
-        private static float widestAt(Graphics2D g2, List<StyledLine> lines, Font[] fonts) {
-            float widest = 0f;
-            for (int i = 0; i < lines.size(); i++) {
-                g2.setFont(fonts[i]);
-                float w = g2.getFontMetrics().stringWidth(lines.get(i).getText());
-                if (w > widest) {
-                    widest = w;
+                if (y > pf.getImageableHeight()) {
+                    break;
                 }
             }
-            return widest;
+            return PAGE_EXISTS;
         }
     }
 }

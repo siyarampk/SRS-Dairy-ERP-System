@@ -1278,48 +1278,61 @@ public class MilkCollectionPanel extends JPanel {
 
         List<PrintUtil.StyledLine> lines = new ArrayList<>();
 
-        // Epson LQ-310 (24-pin dot-matrix): 12pt ≈ 10 CPI = the printer's
-        // standard letter-quality pitch; 10pt ≈ 12 CPI (smaller).
-        Font headerFont = new Font("Courier New", Font.BOLD, 16);
-        Font bodyFont = new Font("Courier New", Font.BOLD, 12);
+        // Fonts
+        Font headerFont = new Font(Font.DIALOG, Font.BOLD, 16); // Supports Hindi/Gujarati
+        Font bodyFont = new Font("Courier New", Font.BOLD, 12); // Slightly larger for 2.5" (was 9)
         Font smallFont = new Font("Courier New", Font.BOLD, 10);
 
-        // Layout width in characters. Sized so the last character stops ~2
-        // spaces before the right edge on 3" slip paper (LQ-310 at 10 CPI:
-        // 30 chars/inch-capacity, minus ~3 chars left margin, minus ~2 chars
-        // right margin = 25 usable).
-        int slipWidth = 25;
+    
+        int SLIP_WIDTH = 34;
 
-        String border = "========================="; // 25-char solid border
+        // Border must match exact width
+        String border = "=================================="; // 34
 
-        // Header
-        int dairyWidth = (int) Math.round(slipWidth * 9 / 16.0);
-        lines.add(new PrintUtil.StyledLine(centerPad(dairyName.toUpperCase(), dairyWidth), headerFont));
+        // Header (Dairy Name) - do NOT pre-pad with spaces; PrintUtil centers it
+        lines.add(new PrintUtil.StyledLine(
+                safeTruncate(dairyName.toUpperCase(), SLIP_WIDTH),
+                headerFont,
+                PrintUtil.StyledLine.ALIGN_CENTER // <--- CENTER THIS LINE
+        ));
         lines.add(new PrintUtil.StyledLine(border, bodyFont));
 
-        String formattedDate = m.getCollectionDate() == null ? "" : m.getCollectionDate().format(java.time.format.DateTimeFormatter.ofPattern("dd-MM-yyyy"));
+        // Data fields
+        String formattedDate = m.getCollectionDate() == null ? ""
+                : m.getCollectionDate().format(DateTimeFormatter.ofPattern("dd-MM-yyyy"));
 
         DateTimeFormatter timeFormatter = DateTimeFormatter.ofPattern("hh:mm:ss");
         String timeText = LocalTime.now().format(timeFormatter);
         String shiftAbbr = "Evening".equalsIgnoreCase(shiftName(m.getShift())) ? "E" : "M";
         String timeWithShift = timeText + " (" + shiftAbbr + ")";
 
-        // Detail rows
-        lines.add(new PrintUtil.StyledLine(slipField("Name", nullToEmpty(m.getCustomerName()).toUpperCase(), slipWidth), bodyFont));
-        lines.add(new PrintUtil.StyledLine(slipField("Date", formattedDate, slipWidth), bodyFont));
-        lines.add(new PrintUtil.StyledLine(slipField("Shift", timeWithShift, slipWidth), bodyFont)); 
-        //lines.add(new PrintUtil.StyledLine(slipField("Code",nullToEmpty(m.getCustomerCode()).toUpperCase() + "/ " + nullToEmpty(m.getMilkType()).toUpperCase(),slipWidth), bodyFont));
-        lines.add(new PrintUtil.StyledLine(slipField("Code",nullToEmpty(m.getCustomerCode()).toUpperCase() + "  " + milkAbbrev(m.getMilkType()),slipWidth), bodyFont));
-        lines.add(new PrintUtil.StyledLine(slipField("Liter", CurrencyUtil.format(m.getQuantity()), slipWidth),bodyFont));
-        lines.add(new PrintUtil.StyledLine(slipField("Fat", trimZeros(m.getFat()) + " %", slipWidth), bodyFont));
-        lines.add(new PrintUtil.StyledLine(slipField("Rs.", CurrencyUtil.formatPlain(m.getAmount()), slipWidth),bodyFont));
-        // Footer
-        //lines.add(new PrintUtil.StyledLine(border, bodyFont));
-        lines.add(new PrintUtil.StyledLine(centerPad("--------- E&OE --------", dairyWidth), smallFont));
-        lines.add(new PrintUtil.StyledLine(centerPad(" "+softwareName.toUpperCase(), dairyWidth), smallFont));
-        lines.add(new PrintUtil.StyledLine(centerPad("Thank You", slipWidth), smallFont));
+        // Using fixed-width fields: Label(6)+": "+Value = aligned columns
+        lines.add(new PrintUtil.StyledLine(
+                slipField("Name", nullToEmpty(m.getCustomerName()).toUpperCase(), SLIP_WIDTH), bodyFont));
+        lines.add(new PrintUtil.StyledLine(slipField("Date", formattedDate, SLIP_WIDTH), bodyFont));
+        lines.add(new PrintUtil.StyledLine(slipField("Shift", timeWithShift, SLIP_WIDTH), bodyFont));
+        lines.add(new PrintUtil.StyledLine(slipField("Code",nullToEmpty(m.getCustomerCode()).toUpperCase() + " " + milkAbbrev(m.getMilkType()), SLIP_WIDTH),bodyFont));
+        lines.add(new PrintUtil.StyledLine(slipField("Liter", CurrencyUtil.format(m.getQuantity()), SLIP_WIDTH),
+                bodyFont));
+        lines.add(new PrintUtil.StyledLine(slipField("Fat", trimZeros(m.getFat()) + " %", SLIP_WIDTH), bodyFont));
+        lines.add(new PrintUtil.StyledLine(slipField("Rs.", CurrencyUtil.formatPlain(m.getAmount()), SLIP_WIDTH),
+                bodyFont));
 
-        PrintUtil.printTextDirect(findOwner(), "Milk Slip", lines, create2InchPageFormat());
+        // Footer - truncate long software names to prevent cutoff
+        String eoeLine = "-------- E&OE --------"; // or customize dash count as needed
+        lines.add(new PrintUtil.StyledLine(eoeLine,smallFont, PrintUtil.StyledLine.ALIGN_CENTER));
+        lines.add(new PrintUtil.StyledLine(safeTruncate(softwareName.toUpperCase(), SLIP_WIDTH), smallFont,PrintUtil.StyledLine.ALIGN_CENTER));
+        lines.add(new PrintUtil.StyledLine("Thank You", smallFont,PrintUtil.StyledLine.ALIGN_CENTER));
+
+        // Use 2.5-inch page format
+        PrintUtil.printSlipDirect(findOwner(), "Milk Slip", lines, 2.5);
+    }
+
+    /** Truncates with ... if exceeds maxLen */
+    private static String safeTruncate(String text, int maxLen) {
+        if (text == null)
+            return "";
+        return text.length() <= maxLen ? text : text.substring(0, Math.max(0, maxLen - 1)) + "…";
     }
 
     private PageFormat create2InchPageFormat() {
@@ -1334,6 +1347,33 @@ public class MilkCollectionPanel extends JPanel {
         return pf;
     }
 
+    private PageFormat create2Dot5InchPageFormat() {
+        double width = 2.5 * 72.0; // 180pt = 64mm (2.5")
+
+        // THIS IS THE FIX: 5 inches exactly (was probably 8.0 or 11.0 before)
+        double height = 2.5 * 50.0; // 360pt = 127mm (5")
+
+        Paper paper = new Paper();
+        paper.setSize(width, height);
+
+        // LQ-210/LQ-310 needs 10pt left margin to clear sprocket holes
+        // If text prints too far right, reduce to 6.0; if prints in sprockets, increase
+        // to 12.0
+        double marginX = 10.0;
+        double marginY = 8.0;
+
+        // Imageable area: where ink goes (must be smaller than total size)
+        paper.setImageableArea(marginX, marginY,
+                width - (marginX * 2),
+                height - marginY);
+        
+
+        PageFormat pf = new PageFormat();
+        pf.setPaper(paper);
+        pf.setOrientation(PageFormat.PORTRAIT);
+        return pf;
+    }
+
      private static String centerPad(String text, int width) {
         if (text == null)
             text = "";
@@ -1341,19 +1381,22 @@ public class MilkCollectionPanel extends JPanel {
         return " ".repeat(left) + text;
     }
 
-     private static String slipField(String label, String value, int width) {
-        if (value == null){
+    private static String slipField(String label, String value, int width) {
+        if (value == null)
             value = "";
+        // Fixed-width label: 6 chars left-aligned + ": " (2 chars) = 8 char prefix
+        // Example: "Name : " (6+2=8), "Rs. : " (6+2=8)
+        String head = String.format("%-5s: ", label);
+        int maxValLen = width - head.length();
+
+        if (maxValLen < 1)
+            maxValLen = 1; // Minimum 1 char for value
+
+        // Strict truncation - never exceed total width
+        if (value.length() > maxValLen) {
+            value = value.substring(0, maxValLen);
         }
-        // One space between label and colon; value immediately after the colon.
-        //String head = String.format("%s:", label);
-        String head = String.format("%-5s:", label);
-        String line = head + value;
-        if (line.length() > width) {
-            int maxValueLen = Math.max(1, width - head.length());
-            line = head + (value.length() > maxValueLen ? value.substring(0, maxValueLen) : value);
-        }
-        return line;
+        return head + value;
     }
 
     /** Returns the full shift name: "Morning" or "Evening". */

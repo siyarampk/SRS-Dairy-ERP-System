@@ -133,15 +133,14 @@ public class DashboardPanel extends JPanel {
         typeCol.add(sectionLabel("Milk Type Breakdown"), BorderLayout.NORTH);
         JPanel typeRow = new JPanel(new GridLayout(1, 3, 8, 0));
         typeRow.setOpaque(false);
-        // Cow Milk: Pale Yellowish-White (light cream / warm yellow tint)
+        // All milk-type cards use a clean white background, matching the
+        // other dashboard cards.
         typeRow.add(tallCard(cowLevelPanel, cowValue, "\uD83D\uDC04 Cow Milk",
-                new Color(0xFF, 0xFD, 0xE7)));
-        // Buffalo Milk: Bright Pure White (opaque, stark white)
+                Color.WHITE));
         typeRow.add(tallCard(buffaloLevelPanel, buffaloValue, "\uD83D\uDC03 Buffalo Milk",
-                new Color(0xF8, 0xF8, 0xFF)));
-        // Mixed Milk: Off-White / Pale Cream
+                Color.WHITE));
         typeRow.add(tallCard(mixLevelPanel, mixValue, "\u267F Mix Milk",
-                new Color(0xFF, 0xF8, 0xE7)));
+                Color.WHITE));
         typeCol.add(typeRow, BorderLayout.CENTER);
 
         JPanel center = new JPanel(new GridLayout(1, 3, 12, 0));
@@ -159,7 +158,7 @@ public class DashboardPanel extends JPanel {
         shiftsCol.add(sectionLabel("Collection Shifts"), BorderLayout.NORTH);
         JPanel shiftRow = new JPanel(new GridLayout(1, 2, 10, 0));
         shiftRow.setOpaque(false);
-        shiftRow.add(smallShiftCard(new SunriseIcon(30), morningValue,
+        shiftRow.add(smallShiftCard(new SunriseIcon(52), morningValue,
                 "Morning Collection", MORNING_GREEN));
         shiftRow.add(smallShiftCard("\uD83C\uDF19", eveningValue,
                 "Evening Collection", EVENING_ORANGE));
@@ -186,7 +185,7 @@ public class DashboardPanel extends JPanel {
         left.setOpaque(false);
         GridBagConstraints lc = new GridBagConstraints();
         lc.anchor = GridBagConstraints.WEST;
-        left.add(iconLabel(icon, 30), lc);
+        left.add(iconLabel(icon, 52), lc);
 
         // Value stacked directly above the caption, as one centred block.
         JPanel text = new JPanel(new GridLayout(2, 1, 0, 2));
@@ -213,13 +212,13 @@ public class DashboardPanel extends JPanel {
         card.setBackground(Color.WHITE);
         card.setBorder(BorderFactory.createCompoundBorder(
                 BorderFactory.createLineBorder(CARD_BORDER, 1, true),
-                BorderFactory.createEmptyBorder(55, 6, 25, 6)));
+                BorderFactory.createEmptyBorder(15, 6, 12, 6)));
         JPanel pad = new JPanel(new BorderLayout(0, 0));
         pad.setOpaque(false);
         JLabel image = loadDashboardImage();
         if (image != null) {
             image.setAlignmentX(Component.CENTER_ALIGNMENT);
-            pad.add(image, BorderLayout.NORTH);
+            pad.add(image, BorderLayout.CENTER);
         } else {
             JLabel placeholder = new JLabel("Dashboard image not found",
                     javax.swing.SwingConstants.CENTER);
@@ -241,13 +240,30 @@ public class DashboardPanel extends JPanel {
             if (raw == null) {
                 return null;
             }
-            // Fixed display size of 350x330 (as requested). The source file is
-            // 489x510, so this stretches the image very slightly to fill the box.
-            int w = 420;
-            int h = Math.round(w * (float) raw.getHeight(null) / raw.getWidth(null));
-            Image scaled = raw.getScaledInstance(w, h, Image.SCALE_SMOOTH);
-            JLabel label = new JLabel(new ImageIcon(scaled), javax.swing.SwingConstants.CENTER);
-            label.setPreferredSize(new Dimension(w, h));
+            // Auto-fit: the icon is rescaled whenever the label gets resized,
+            // so the image always fits the space the card actually provides
+            // (never clipped at the bottom). Capped at 500px wide so it never
+            // grows oversized on large windows.
+            JLabel label = new JLabel("", javax.swing.SwingConstants.CENTER);
+            Runnable fit = () -> {
+                int availW = Math.max(1, label.getWidth());
+                int availH = Math.max(1, label.getHeight());
+                double scale = Math.min(
+                        (double) availW / raw.getWidth(null),
+                        (double) availH / raw.getHeight(null));
+                scale = Math.min(scale, 500.0 / raw.getWidth(null));
+                int w = (int) Math.round(raw.getWidth(null) * scale);
+                int h = (int) Math.round(raw.getHeight(null) * scale);
+                if (w > 0 && h > 0) {
+                    label.setIcon(new ImageIcon(raw.getScaledInstance(w, h, Image.SCALE_SMOOTH)));
+                }
+            };
+            label.addComponentListener(new java.awt.event.ComponentAdapter() {
+                @Override
+                public void componentResized(java.awt.event.ComponentEvent e) {
+                    fit.run();
+                }
+            });
             return label;
         } catch (Exception e) {
             return null;
@@ -316,18 +332,38 @@ public class DashboardPanel extends JPanel {
                 BorderFactory.createLineBorder(CARD_BORDER, 1, true),
                 BorderFactory.createEmptyBorder(12, 6, 12, 6)));
 
+        // Split a leading emoji off the caption so the milk-type icon
+        // (cow / buffalo / mix) is shown large, while the caption text
+        // itself stays small.
+        String typeEmoji = "";
+        String text = caption;
+        if (!caption.isEmpty() && caption.codePointAt(0) > 0x2000) {
+            int cp = caption.codePointAt(0);
+            typeEmoji = new String(Character.toChars(cp));
+            text = caption.substring(typeEmoji.length()).trim();
+        }
+
         JPanel middle = new JPanel();
         middle.setOpaque(false);
         middle.setLayout(new BoxLayout(middle, BoxLayout.Y_AXIS));
         middle.add(Box.createVerticalGlue());
         middle.add(iconLabel(icon, 38));
-        middle.add(Box.createVerticalStrut(10));
+        middle.add(Box.createVerticalStrut(8));
+        // The milk-type icon (cow / buffalo / mix) sits right below the
+        // bucket, shown large; the caption text stays small.
+        if (!typeEmoji.isEmpty()) {
+            JLabel typeIcon = new JLabel(typeEmoji, javax.swing.SwingConstants.CENTER);
+            typeIcon.setFont(typeIcon.getFont().deriveFont(Font.PLAIN, 46f));
+            typeIcon.setAlignmentX(Component.CENTER_ALIGNMENT);
+            middle.add(typeIcon);
+            middle.add(Box.createVerticalStrut(8));
+        }
         value.setAlignmentX(Component.CENTER_ALIGNMENT);
         value.setFont(value.getFont().deriveFont(Font.BOLD, 20f));
         middle.add(value);
         // Caption comes immediately after the LTR value.
         middle.add(Box.createVerticalStrut(4));
-        JLabel cap = new JLabel(caption, javax.swing.SwingConstants.CENTER);
+        JLabel cap = new JLabel(text, javax.swing.SwingConstants.CENTER);
         cap.setFont(cap.getFont().deriveFont(Font.PLAIN, 14f));
         cap.setForeground(new Color(0x44, 0x44, 0x44));
         cap.setAlignmentX(Component.CENTER_ALIGNMENT);
@@ -676,7 +712,7 @@ public class DashboardPanel extends JPanel {
         private final javax.swing.Timer animator;
 
         MilkLevelPanel() {
-            setPreferredSize(new Dimension(64, 64));
+            setPreferredSize(new Dimension(96, 96));
             setOpaque(false);
             setAlignmentX(Component.CENTER_ALIGNMENT);
             animator = new javax.swing.Timer(33, e -> {
