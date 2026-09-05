@@ -62,6 +62,10 @@ public class SettingsService {
             }
             reload();
             applyDisplayConfig();
+            // Propagate every saved setting live: screens registered with
+            // AppBus.onSettingsChanged re-apply their defaults/locks at once,
+            // so no restart is needed after changing Application Settings.
+            dairy.erp.util.AppBus.fireSettingsChanged(settings);
         } catch (Exception e) {
             LOG.severe("Could not save settings: " + e.getMessage());
             throw new RuntimeException("Could not save settings.", e);

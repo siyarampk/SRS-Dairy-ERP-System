@@ -9,7 +9,6 @@ import dairy.erp.util.DateUtil;
 import dairy.erp.util.PrintUtil;
 import dairy.erp.util.UIUtil;
 import dairy.erp.util.ValidationUtil;
-
 import javax.swing.BorderFactory;
 import javax.swing.ButtonGroup;
 import javax.swing.Icon;
@@ -46,8 +45,25 @@ import java.time.LocalDate;
 import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.List;
-import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
+import javax.swing.JFileChooser;
+import javax.swing.filechooser.FileNameExtensionFilter;
+import java.awt.Graphics;
+import java.awt.Graphics2D;
+import java.awt.print.Printable;
+import java.awt.print.PrinterException;
+import java.util.Collection;
+import java.awt.FontMetrics;
+import java.awt.RenderingHints;
+import java.awt.Desktop;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
+import javax.print.attribute.standard.PrinterIsAcceptingJobs;
+import javax.print.attribute.standard.PrinterState;
+ 
 
 /**
  * Milk Collection entry — the primary daily workflow. Optimised for keyboard
@@ -143,6 +159,10 @@ public class MilkCollectionPanel extends JPanel {
         // Propagation: reload the filter combo whenever customers change on
         // any other screen (Customer master add/update/delete).
         dairy.erp.util.AppBus.onCustomersChanged(v -> loadCustomerFilter());
+        // Propagation: re-apply Application Settings (default shift/milk type,
+        // date & rate lock switches) the moment they are saved in Settings —
+        // no restart needed.
+        dairy.erp.util.AppBus.onSettingsChanged(v -> applyLiveSettings());
         loadDairyName();
         add(buildMain(), BorderLayout.CENTER);
         loadTable(null);
@@ -666,41 +686,94 @@ public class MilkCollectionPanel extends JPanel {
     }
 
     /**
-     * Returns the Date field component: the calendar picker when
-     * "Allow Collection Date Adjustment" is true, or a locked text field
-     * showing today's date when false. The text field columns and button
-     * size are tuned so the overall width matches the other form fields.
+     * Returns the Date field component: the calendar picker shown editable
+     * when "Allow Collection Date Adjustment" is true, or locked (padlock
+     * icon, disabled calendar button) when false. The lock state is applied
+     * by {@link #applyDateAdjustment()} so it can also be re-applied live
+     * whenever the setting changes on the Settings screen.
      */
     private JComponent dateComponent() {
+        applyDateAdjustment();
+        return datePicker;
+    }
+
+    /** Re-applies the "Allow Collection Date Adjustment" lock state live. */
+    private void applyDateAdjustment() {
         boolean editable = settingsService.getBoolean("app.allow_date_adjustment", false);
+        // Same tuned sizing for both states so the overall field width
+        // matches the other form fields.
+        datePicker.getTextField().setColumns(10);
+        datePicker.getButton().setPreferredSize(new java.awt.Dimension(30, 28));
         if (editable) {
-            datePicker.getTextField().setColumns(10);
-            datePicker.getButton().setPreferredSize(new java.awt.Dimension(30, 28));
-            return datePicker;
+            removeLockIcon(datePicker.getTextField());
+            datePicker.getButton().setEnabled(true);
+            return;
         }
-        // Locked: show the date as a disabled text field with padlock icon.
-        JTextField lockedField = new JTextField(DateUtil.toDisplay(LocalDate.now()), 10);
-        lockedField.setEditable(false);
-        lockedField.setFocusable(false);
-        UIUtil.styleComponent(lockedField, 18);
-        return withLockIcon(lockedField, null);
+        // Locked: show today's date with a padlock icon and disable the
+        // calendar button so no date can be picked or typed.
+        datePicker.setDate(LocalDate.now());
+        withLockIcon(datePicker.getTextField(), null);
+        datePicker.getButton().setEnabled(false);
     }
 
     /**
      * Returns the Rate field component: editable when "Allow Rate Adjustment"
      * is true, or a locked field showing the auto-calculated rate when false.
+     * The lock state is applied by {@link #applyRateAdjustment()} so it can
+     * also be re-applied live whenever the setting changes.
      */
     private JComponent rateComponent() {
+        applyRateAdjustment();
+        return rateField;
+    }
+
+    /** Re-applies the "Allow Rate Adjustment" lock state live. */
+    private void applyRateAdjustment() {
         boolean editable = settingsService.getBoolean("app.allow_rate_adjustment", false);
         if (editable) {
+            removeLockIcon(rateField);
             rateField.setEditable(true);
             rateField.setFocusable(true);
             rateField.setBackground(Color.WHITE);
-            return rateField;
+            return;
         }
+        rateField.setText("");
         rateField.setEditable(false);
         rateField.setFocusable(false);
-        return withLockIcon(rateField, null);
+        withLockIcon(rateField, null);
+    }
+
+    /**
+     * Live propagation of Application Settings saved on the Settings screen:
+     * re-applies the default shift and milk type selections and the Date /
+     * Rate field lock switches, then recalculates so the displayed rate and
+     * amount follow the new settings immediately — no restart needed.
+     */
+    private void applyLiveSettings() {
+        selectShift(settingsService.get("app.default_shift"));
+        setSelectedMilkType(settingsService.get("app.default_milk_type"));
+        applyDateAdjustment();
+        applyRateAdjustment();
+        recalc();
+    }
+
+    /**
+     * Removes a previously added {@link LockIconBorder} so a field that was
+     * locked can become editable again (e.g. when "Allow Rate Adjustment" is
+     * switched on while the Milk Collection screen is open).
+     */
+    private void removeLockIcon(javax.swing.JTextField field) {
+        Border current = field.getBorder();
+        if (current instanceof javax.swing.border.CompoundBorder) {
+            javax.swing.border.CompoundBorder cb = (javax.swing.border.CompoundBorder) current;
+            if (cb.getInsideBorder() instanceof LockIconBorder) {
+                field.setBorder(cb.getOutsideBorder());
+            } else if (cb.getOutsideBorder() instanceof LockIconBorder) {
+                field.setBorder(cb.getInsideBorder());
+            }
+        } else if (current instanceof LockIconBorder) {
+            field.setBorder(null);
+        }
     }
 
     /**
@@ -1207,7 +1280,7 @@ public class MilkCollectionPanel extends JPanel {
 
         // Epson LQ-310 (24-pin dot-matrix): 12pt ≈ 10 CPI = the printer's
         // standard letter-quality pitch; 10pt ≈ 12 CPI (smaller).
-        Font headerFont = new Font("Courier New", Font.BOLD, 12);
+        Font headerFont = new Font("Courier New", Font.BOLD, 16);
         Font bodyFont = new Font("Courier New", Font.BOLD, 12);
         Font smallFont = new Font("Courier New", Font.BOLD, 10);
 
@@ -1220,11 +1293,11 @@ public class MilkCollectionPanel extends JPanel {
         String border = "========================="; // 25-char solid border
 
         // Header
-        lines.add(new PrintUtil.StyledLine(centerPad(dairyName.toUpperCase(), slipWidth), headerFont));
+        int dairyWidth = (int) Math.round(slipWidth * 9 / 16.0);
+        lines.add(new PrintUtil.StyledLine(centerPad(dairyName.toUpperCase(), dairyWidth), headerFont));
         lines.add(new PrintUtil.StyledLine(border, bodyFont));
 
-        String formattedDate = m.getCollectionDate() == null ? ""
-                : m.getCollectionDate().format(java.time.format.DateTimeFormatter.ofPattern("dd-MM-yy"));
+        String formattedDate = m.getCollectionDate() == null ? "" : m.getCollectionDate().format(java.time.format.DateTimeFormatter.ofPattern("dd-MM-yyyy"));
 
         DateTimeFormatter timeFormatter = DateTimeFormatter.ofPattern("hh:mm:ss");
         String timeText = LocalTime.now().format(timeFormatter);
@@ -1232,24 +1305,18 @@ public class MilkCollectionPanel extends JPanel {
         String timeWithShift = timeText + " (" + shiftAbbr + ")";
 
         // Detail rows
-        lines.add(new PrintUtil.StyledLine(
-                slipField("Name", nullToEmpty(m.getCustomerName()).toUpperCase(), slipWidth), bodyFont));
+        lines.add(new PrintUtil.StyledLine(slipField("Name", nullToEmpty(m.getCustomerName()).toUpperCase(), slipWidth), bodyFont));
         lines.add(new PrintUtil.StyledLine(slipField("Date", formattedDate, slipWidth), bodyFont));
-        lines.add(new PrintUtil.StyledLine(slipField("Shift", timeWithShift, slipWidth), bodyFont));
-        lines.add(new PrintUtil.StyledLine(slipField("Code",
-                nullToEmpty(m.getCustomerCode()).toUpperCase() + "/ " + nullToEmpty(m.getMilkType()).toUpperCase(),
-                slipWidth), bodyFont));
-        lines.add(new PrintUtil.StyledLine(slipField("Liter", CurrencyUtil.format(m.getQuantity()), slipWidth),
-                bodyFont));
-        lines.add(
-                new PrintUtil.StyledLine(slipField("FAT", trimZeros(m.getFat()) + " %", slipWidth), bodyFont));
-        lines.add(new PrintUtil.StyledLine(slipField("Rs.", CurrencyUtil.formatMoney(m.getAmount()), slipWidth),
-                bodyFont));
-
+        lines.add(new PrintUtil.StyledLine(slipField("Shift", timeWithShift, slipWidth), bodyFont)); 
+        //lines.add(new PrintUtil.StyledLine(slipField("Code",nullToEmpty(m.getCustomerCode()).toUpperCase() + "/ " + nullToEmpty(m.getMilkType()).toUpperCase(),slipWidth), bodyFont));
+        lines.add(new PrintUtil.StyledLine(slipField("Code",nullToEmpty(m.getCustomerCode()).toUpperCase() + "  " + milkAbbrev(m.getMilkType()),slipWidth), bodyFont));
+        lines.add(new PrintUtil.StyledLine(slipField("Liter", CurrencyUtil.format(m.getQuantity()), slipWidth),bodyFont));
+        lines.add(new PrintUtil.StyledLine(slipField("Fat", trimZeros(m.getFat()) + " %", slipWidth), bodyFont));
+        lines.add(new PrintUtil.StyledLine(slipField("Rs.", CurrencyUtil.formatPlain(m.getAmount()), slipWidth),bodyFont));
         // Footer
         //lines.add(new PrintUtil.StyledLine(border, bodyFont));
-        lines.add(new PrintUtil.StyledLine(centerPad("---------- E&OE ----------", slipWidth), smallFont));
-        lines.add(new PrintUtil.StyledLine(centerPad(softwareName.toUpperCase(), slipWidth), smallFont));
+        lines.add(new PrintUtil.StyledLine(centerPad("--------- E&OE --------", dairyWidth), smallFont));
+        lines.add(new PrintUtil.StyledLine(centerPad(" "+softwareName.toUpperCase(), dairyWidth), smallFont));
         lines.add(new PrintUtil.StyledLine(centerPad("Thank You", slipWidth), smallFont));
 
         PrintUtil.printTextDirect(findOwner(), "Milk Slip", lines, create2InchPageFormat());
@@ -1275,10 +1342,12 @@ public class MilkCollectionPanel extends JPanel {
     }
 
      private static String slipField(String label, String value, int width) {
-        if (value == null)
+        if (value == null){
             value = "";
+        }
         // One space between label and colon; value immediately after the colon.
-        String head = String.format("%s:", label);
+        //String head = String.format("%s:", label);
+        String head = String.format("%-5s:", label);
         String line = head + value;
         if (line.length() > width) {
             int maxValueLen = Math.max(1, width - head.length());
@@ -1286,21 +1355,6 @@ public class MilkCollectionPanel extends JPanel {
         }
         return line;
     }
-
-    // private static String slipFieldCentered(String label, String value, int width) {
-    //     if (value == null)
-    //         value = "";
-    //     String head = String.format("%-6s: ", label);
-    //     int remaining = width - head.length() - value.length();
-
-    //     if (remaining > 0) {
-    //         int leftPad = remaining / 2;
-    //         return head + " ".repeat(leftPad) + value;
-    //     }
-    //     return head + value;
-    // }
-
- 
 
     /** Returns the full shift name: "Morning" or "Evening". */
     private static String shiftName(String shift) {
@@ -1332,5 +1386,13 @@ public class MilkCollectionPanel extends JPanel {
             c = c.getParent();
         }
         return (java.awt.Frame) c;
+    }
+  
+    private static String milkAbbrev(String milkType) {
+        if (milkType == null || milkType.isBlank()) {
+            return "";
+        }
+        String t = milkType.trim();
+        return t.length() > 4 ? t.substring(0, 4) : t;
     }
 }
