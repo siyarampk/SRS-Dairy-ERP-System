@@ -446,9 +446,8 @@ PRAGMA foreign_keys = ON;
 Admin accounts are seeded automatically during the first startup:
 
 ```text
-Username: ramkesh     Password: ramkesh@86
-Username: siyarampk   Password: Siyaram@123
-Username: anil        Password: anil8290
+ 
+Username: siyarampk   Password: Siyarampk
 ```
 
 **Important:** Change the default passwords after the first login.
