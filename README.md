@@ -68,7 +68,7 @@ lib/slf4j-nop-1.7.36.jar
 * Password change
 * Salted SHA-256 password hashing
 * Single-user access
-* Default admin account seeded on first startup
+* Default admin accounts seeded on first startup
 
 ## 👤 Customer / Member Management
 
@@ -82,6 +82,7 @@ lib/slf4j-nop-1.7.36.jar
 * Customer codes such as `CUST001`
 * Customer transaction history
 * Customer printing
+* **Keyboard-first form**: pressing Enter moves to the next field — Code → Name → Mobile → Address → Village → Milk Type → Status → Registration Date → Remarks → Save
 
 ## 🥛 Milk Collection
 
@@ -97,7 +98,7 @@ Record daily milk collection with:
 * Rate
 * Total amount
 
-The milk collection screen is designed for **keyboard-first operation** for faster daily data entry.
+The milk collection screen is designed for **keyboard-first operation** for faster daily data entry (Enter flows from date → shift → customer code → quantity → FAT → rate → remarks → **Save & Print**).
 
 ### Milk Types
 
@@ -109,9 +110,20 @@ The milk collection screen is designed for **keyboard-first operation** for fast
 
 * Automatic FAT/SNF rate lookup
 * Automatic amount calculation
-* Duplicate-entry prevention
+* Duplicate-entry prevention (same customer cannot be recorded twice for the same date & shift)
 * Per-record rate snapshot
-* Collection history
+* Collection history (searchable by date range, customer, shift)
+* **FAT entry for any milk type from 1 to 15** (decimals allowed, e.g. `7.25`) — no per-milk-type restriction
+  * Typing a value **below 1 or above 15** turns the FAT field border **red** immediately
+  * Saving with an out-of-range FAT shows: *"FAT must be between 1 and 15."*
+* **Auto rate/amount**: typing FAT automatically fills the rate (from the rate chart) and the amount
+* **Smart rate lookup**: exact FAT/SNF band match with a **nearest-FAT fallback** when there is no exact rule
+
+### Collection Records Table
+
+* Clean, modern grid with a **dark theme-coloured header**, zebra-striped rows and fixed column widths
+* **Grand Totals bar** at the bottom: record count, unique customer count, **Avg FAT**, **Total Qty (L)**, **Avg Rate** and **Total Amount**
+* **Generate Detailed Report** button below the table exports exactly what is on screen to a CSV — the app asks **where you would like to save it** before writing
 
 ---
 
@@ -141,7 +153,7 @@ This allows the dairy to configure its own milk rate structure rather than hard-
 
 # 💰 Rate Chart Management
 
-The Rate Chart module allows the user to configure milk rates for different milk types and quality ranges.
+The Rate Chart module allows the user to configure milk rates for different milk types and quality ranges (min/max FAT, min/max SNF, rate, effective from/to and active flag).
 
 Example:
 
@@ -154,6 +166,15 @@ Mixed        4.0 - 6.0    8.0 - 9.5    ₹XX.XX
 ```
 
 The actual rates are configurable from the application.
+
+### Rate Chart CSV Import / Export
+
+* **Template button** generates a ready-to-fill CSV template (with sample rows) so the columns are always right
+* **Export** saves the current rate chart to CSV from the Export dropdown -> **Rate Chart**
+* **Import** validates every row (milk type, FAT/SNF bounds, rate, dates, active flag) and is **transactional** — either every row is imported or nothing changes, with per-row errors reported
+* On import you can choose to **replace the whole chart** or **add on top**
+* Changes are pushed **live** to the Rate Chart screen and anywhere else that reads rates — **no restart needed**
+
 
 ---
 
@@ -168,8 +189,9 @@ The payment module provides:
 * Outstanding amount
 * Payment reports
 * Transaction tracking
+* **Keyboard-first New Payment form** — Enter flows from date → mode → customer code → amount → reference → remarks → **Save & Print**
 
-The ledger provides a consolidated view of milk collection amounts and payments for each customer.
+The ledger provides a consolidated view of milk collection amounts and payments for each customer (milk supplied with rates, payments made, and the running / outstanding balance).
 
 ---
 
@@ -180,13 +202,13 @@ The dashboard provides a quick overview of daily dairy operations.
 It can display:
 
 * Today's milk collection
-* Total milk quantity
-* Collection amount
-* Customer count
-* Payment summary
-* Outstanding amount
+* **Today's Summary** cards (customers, total milk, total amount)
+* **Collection Shifts** — morning and evening quantity cards
+* **Milk Type Breakdown** — Cow / Buffalo / Mix quantities with animated milk-fill vessels
+* 7-day earnings sparkline (mini area chart)
 * Quick actions
-* Recent activities
+
+The dashboard **re-colours itself live** to match the selected application theme.
 
 ---
 
@@ -205,20 +227,20 @@ The system provides multiple operational reports:
 * Collection amount report
 * Outstanding report
 
-Reports support **weighted-average calculations** where applicable.
+Reports support **weighted-average calculations** where applicable (e.g. weighted average FAT).
 
 ---
 
-# 📥 CSV Import & Export
+# 📥 CSV Import & Export (Data Tools)
 
-The application supports CSV data operations.
+The **Data Tools** screen centralises all data movement — Import, Export, Templates, Backup and Restore. Export supports **Customers, Milk Collections, Payments, Rate Chart, Customer Ledger, Daily Report and Monthly Report**.
 
 ### CSV Import
 
-* Transactional import
-* Row-level validation
-* Invalid-row detection
-* Safe database insertion
+* Transactional import (all-or-nothing)
+* Row-level validation with per-row error messages
+* Bread-ready CSV **templates** (Milk Collection, Rate Chart) so the columns are always correct
+* Rate Chart import offers **replace** or **append**
 
 ### CSV Export
 
@@ -228,6 +250,7 @@ Export relevant dairy data into CSV files for:
 * Backup
 * External processing
 * Record keeping
+
 
 ---
 
@@ -264,24 +287,49 @@ java.awt.print
 Printing can be used for:
 
 * Customer lists
-* Milk collection reports
-* Payment reports
+* Milk collection slips (member receipts — **Save & Print** in each entry screen)
+* Payment receipts
 * Customer statements
 * Other application reports
 
 ---
 
+# 🎨 Appearance — Application Themes
+
+Choose from **four colour themes** in Application Settings:
+
+| Theme        | Vibe                        |
+| ------------ | --------------------------- |
+| Ocean Teal   | Calm, professional blue-green |
+| Royal Purple | Rich, deep purple           |
+| Forest Green | Fresh, natural green        |
+| Sunset Orange| Warm, energetic orange      |
+
+Selected theme colours flow through the **menu bar, dashboard figures, shift cards, table headers, zebra row stripes and buttons** — applied **live** the moment you save, no restart needed.
+
+---
+
 # ⌨️ Keyboard Shortcuts
 
-The application provides keyboard shortcuts for frequently used modules:
+The application provides function-key shortcuts for frequently used modules:
 
-| Shortcut | Module     |
-| -------- | ---------- |
-| `F1`     | Customers  |
-| `F2`     | Rate Chart |
-| `F3`     | Reports    |
+| Shortcut | Module                      |
+| -------- | --------------------------- |
+| `F1`     | Dashboard                   |
+| `F2`     | Customer Management         |
+| `F3`     | Rate Chart                  |
+| `F4`     | New Collection              |
+| `F5`     | New Payment                 |
+| `F6`     | Customer Ledger             |
+| `F7`     | Reports                     |
+| `F8`     | Data Tools (Import/Export/Backup) |
+| `F9`     | Application Settings        |
+| `Esc`    | Back to Dashboard           |
 
-The milk collection workflow is also designed for keyboard-first data entry.
+### Enter-Key Form Navigation
+
+The Customer Details, New Collection and New Payment forms are fully **keyboard-first**. Pressing Enter in any input moves focus to the next logical field; Enter on the Save / Save & Print button submits the form, and the confirmation popup's OK button is auto-focused so Enter closes it and readies the form for the next entry.
+
 
 ---
 
@@ -323,9 +371,6 @@ SRS-Dairy-ERP-System/
 │           │   ├── Panels
 │           │   └── Dialogs
 │           │
-│           ├── report/
-│           │   └── Report Computation
-│           │
 │           └── util/
 │               ├── CSV
 │               ├── Currency
@@ -333,6 +378,7 @@ SRS-Dairy-ERP-System/
 │               ├── Validation
 │               ├── Print
 │               ├── Hash
+│               ├── Theme
 │               └── Log
 │
 ├── data/
@@ -392,18 +438,20 @@ SQLite foreign-key enforcement is enabled using:
 PRAGMA foreign_keys = ON;
 ```
 
+
 ---
 
 # 🔑 Default Login
 
-The default user is seeded automatically during the first startup.
+Admin accounts are seeded automatically during the first startup:
 
 ```text
-Username: admin
-Password: admin123
+Username: ramkesh     Password: ramkesh@86
+Username: siyarampk   Password: Siyaram@123
+Username: anil        Password: anil8290
 ```
 
-**Important:** Change the default password after the first login.
+**Important:** Change the default passwords after the first login.
 
 Password can be changed from:
 
@@ -544,7 +592,8 @@ JDBC
 SQLite Database
 ```
 
-This separation keeps UI, business logic, and database operations organized and easier to maintain.
+This separation keeps UI, business logic, and database operations organized and easier to maintain. A small in-process event bus (`AppBus`) lets shared data (dairy name, theme, settings, rate chart, customer changes) propagate **live** to every open screen.
+
 
 ---
 
@@ -574,40 +623,12 @@ No cloud server or external backend is required for normal operation.
 
 ---
 
-# 🌿 Git Branch Strategy
-
-The repository can follow the following branch structure:
-
-| Branch      | Purpose                      |
-| ----------- | ---------------------------- |
-| `main`      | Stable production-ready code |
-| `develop`   | Development and integration  |
-| `feature/*` | New feature development      |
-| `bugfix/*`  | Bug fixes                    |
-| `release/*` | Release preparation          |
-
-### Feature Branch Example
-
-```bash
-git checkout -b feature/customer-management
-```
-
-Commit changes:
-
-```bash
-git add .
-git commit -m "Add customer management module"
-```
-
-Push the branch:
-
-```bash
-git push -u origin feature/customer-management
-```
-
----
-
 # 🔒 Security & Data Protection
+
+* Passwords are stored using **salted SHA-256 hashing** — never in plain text
+* Bilingual English / Hindi UI, saved per user
+* Application settings and theme changes propagate **live** through the event bus — no restart needed for most changes
+* Regular **backup** is recommended (one click in Data Tools)
 
 Do not commit sensitive or production information to GitHub.
 
@@ -622,7 +643,7 @@ Avoid committing:
 * Financial information
 * Local log files
 
-The default login password should be changed after the first startup.
+The default login passwords should be changed after the first startup.
 
 ---
 
@@ -671,6 +692,9 @@ When adding new features:
 10. Test milk-rate calculations carefully before release.
 11. Do not commit sensitive data.
 12. Create a database backup before major database changes.
+13. Use `AppBus` to propagate shared-data changes so screens update live.
+14. Reuse `UIUtil` shared styling (tables, fields, buttons, themes) for a consistent look.
+
 
 ---
 

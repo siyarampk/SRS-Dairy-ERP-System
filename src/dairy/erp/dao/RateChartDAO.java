@@ -57,6 +57,39 @@ public class RateChartDAO {
         }
     }
 
+    /**
+     * Replaces the whole rate chart with the given rules inside one
+     * transaction (clear + insert, all-or-nothing). Used by the CSV import
+     * in Data Tools when the user chooses to clear the table first.
+     */
+    public int replaceRules(List<RateChart> rules) throws SQLException {
+        String insert = "INSERT INTO rate_chart(milk_type, fat_min, fat_max, snf_min, snf_max, " +
+                "rate_per_litre, effective_from, effective_to, active, created_at, updated_at) " +
+                "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))";
+        try (Connection conn = DatabaseManager.getConnection()) {
+            conn.setAutoCommit(false);
+            try {
+                try (Statement st = conn.createStatement()) {
+                    st.executeUpdate("DELETE FROM rate_chart");
+                }
+                try (PreparedStatement ps = conn.prepareStatement(insert)) {
+                    for (RateChart r : rules) {
+                        bind(ps, r);
+                        ps.addBatch();
+                    }
+                    ps.executeBatch();
+                }
+                conn.commit();
+                return rules.size();
+            } catch (SQLException e) {
+                conn.rollback();
+                throw e;
+            } finally {
+                conn.setAutoCommit(true);
+            }
+        }
+    }
+
     public List<RateChart> findAll() throws SQLException {
         String sql = "SELECT " + COLUMNS + " FROM rate_chart ORDER BY milk_type, fat_min, snf_min";
         return query(sql);
@@ -110,6 +143,32 @@ public class RateChartDAO {
                          "UPDATE rate_chart SET active = 0, updated_at = datetime('now') WHERE id = ?")) {
                 ps.setInt(1, id);
                 ps.executeUpdate();
+            }
+        }
+    }
+    /**
+     * Inserts rate rules in one transaction (all-or-nothing) and returns the
+     * number of rows inserted. Used by the CSV import in Data Tools.
+     */
+    public int importRules(List<RateChart> rules) throws SQLException {
+        String sql = "INSERT INTO rate_chart(milk_type, fat_min, fat_max, snf_min, snf_max, " +
+                "rate_per_litre, effective_from, effective_to, active, created_at, updated_at) " +
+                "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))";
+        try (Connection conn = DatabaseManager.getConnection()) {
+            conn.setAutoCommit(false);
+            try (PreparedStatement ps = conn.prepareStatement(sql)) {
+                for (RateChart r : rules) {
+                    bind(ps, r);
+                    ps.addBatch();
+                }
+                int[] counts = ps.executeBatch();
+                conn.commit();
+                return counts.length;
+            } catch (SQLException e) {
+                conn.rollback();
+                throw e;
+            } finally {
+                conn.setAutoCommit(true);
             }
         }
     }

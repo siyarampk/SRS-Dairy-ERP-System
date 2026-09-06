@@ -7,10 +7,12 @@ import dairy.erp.util.PrintUtil;
 import dairy.erp.util.UIUtil;
 import dairy.erp.util.ValidationUtil;
 
+import javax.swing.AbstractAction;
 import javax.swing.BorderFactory;
 import javax.swing.ButtonGroup;
 import javax.swing.JButton;
 import javax.swing.JComboBox;
+import javax.swing.JComponent;
 import javax.swing.JFrame;
 import javax.swing.JLabel;
 import javax.swing.JOptionPane;
@@ -19,6 +21,7 @@ import javax.swing.JRadioButton;
 import javax.swing.JScrollPane;
 import javax.swing.JTable;
 import javax.swing.JTextField;
+import javax.swing.KeyStroke;
 import javax.swing.ListSelectionModel;
 import javax.swing.table.DefaultTableModel;
 import java.awt.BorderLayout;
@@ -31,6 +34,7 @@ import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.GridLayout;
 import java.awt.Insets;
+import java.awt.event.ActionEvent;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
@@ -100,8 +104,63 @@ public class CustomerPanel extends JPanel {
         initComponents();
         loadDairyName();
         add(buildMain(), BorderLayout.CENTER);
+        installEnterKeyNavigation();
         newRecord(); // start in create mode: New/Save enabled, Update/Delete disabled
         loadAll();
+    }
+
+    /**
+     * Keyboard-driven entry: Enter moves focus along the form in logical
+     * order — Code → Name → Mobile → Address → Village → Milk Type → Status
+     * → Registration Date → Remarks → Save — and pressing Enter on Save (or
+     * Update) submits the form. Radio groups and the date picker simply hand
+     * focus to the next field, so Enter never triggers an accidental
+     * submission or dialog anywhere in the chain.
+     */
+    private void installEnterKeyNavigation() {
+        enterMovesFocusTo(codeField, nameField);
+        enterMovesFocusTo(nameField, mobileField);
+        enterMovesFocusTo(mobileField, addressField);
+        enterMovesFocusTo(addressField, villageField);
+        enterMovesFocusTo(villageField, cowRadio);
+        // Milk Type group: Enter walks Cow → Buffalo → Mix, then to Status.
+        enterMovesFocusTo(cowRadio, buffaloRadio);
+        enterMovesFocusTo(buffaloRadio, mixRadio);
+        enterMovesFocusTo(mixRadio, activeRadio);
+        // Status group: Active → Inactive, then to the Registration Date.
+        enterMovesFocusTo(activeRadio, inactiveRadio);
+        enterMovesFocusTo(inactiveRadio, regDatePicker.getTextField());
+        // Date picker: both its (non-editable) field and its calendar button
+        // just pass focus on — the calendar itself still opens with a click
+        // or Space on the button, never with Enter.
+        enterMovesFocusTo(regDatePicker.getTextField(), remarksField);
+        enterMovesFocusTo(regDatePicker.getButton(), remarksField);
+        enterMovesFocusTo(remarksField, saveBtn);
+        // Submit: Enter on the Save (or Update) button activates it.
+        enterClicksButton(saveBtn);
+        enterClicksButton(updateBtn);
+    }
+
+    /** Binds Enter on {@code from} to move focus to {@code next}. */
+    private static void enterMovesFocusTo(JComponent from, JComponent next) {
+        from.getInputMap(JComponent.WHEN_FOCUSED).put(KeyStroke.getKeyStroke("ENTER"), "enterNext");
+        from.getActionMap().put("enterNext", new AbstractAction() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                next.requestFocusInWindow();
+            }
+        });
+    }
+
+    /** Binds Enter on a button to click it (JButton otherwise needs Space). */
+    private static void enterClicksButton(JButton button) {
+        button.getInputMap(JComponent.WHEN_FOCUSED).put(KeyStroke.getKeyStroke("ENTER"), "enterClick");
+        button.getActionMap().put("enterClick", new AbstractAction() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                button.doClick();
+            }
+        });
     }
 
     /** Shows the dairy name (from Settings) in red, 28px bold, above the input fields. */
@@ -513,6 +572,7 @@ public class CustomerPanel extends JPanel {
                     "Update", JOptionPane.INFORMATION_MESSAGE);
             loadAll();
             clearFields();
+            nameField.requestFocusInWindow(); // ready the form for the next entry
         } catch (RuntimeException ex) {
             UIUtil.showMessage(this, ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
         }
@@ -676,9 +736,10 @@ public class CustomerPanel extends JPanel {
         public java.awt.Component getTableCellRendererComponent(JTable t, Object value,
                 boolean isSelected, boolean hasFocus, int row, int column) {
             text = value == null ? "" : value.toString().trim();
+            // Row colours follow the selected application theme.
             rowBackground = isSelected
-                    ? new Color(0xd2, 0xec, 0xd9)
-                    : (row % 2 == 0 ? Color.WHITE : new Color(0xe8, 0xf1, 0xf7));
+                    ? UIUtil.tableSelectedRowColor()
+                    : (row % 2 == 0 ? Color.WHITE : UIUtil.tableOddRowColor());
             return this;
         }
 

@@ -77,6 +77,8 @@ public final class UIUtil {
             t.getTableHeader().setBackground(BRAND);
             t.getTableHeader().setForeground(Color.WHITE);
             t.setGridColor(tableGridColor());
+            t.setSelectionBackground(tableSelectedRowColor());
+            t.setSelectionForeground(tableSelectedTextColor());
             t.repaint();
         }
 
@@ -209,9 +211,14 @@ public final class UIUtil {
         return lighten(BRAND, 0.55f);
     }
 
-    /** Zebra stripe colour for odd rows, tinted from the theme brand. */
+    /** Zebra stripe colour for odd rows, tinted from the theme brand. The
+     * tint keeps the stripe light (readable) but strong enough that the
+     * selected theme is clearly visible: e.g. a light teal stripe for Ocean
+     * Teal, a light purple stripe for Royal Purple, ... immediately when
+     * the theme changes in Application Settings.
+     */
     public static Color tableOddRowColor() {
-        return lighten(BRAND, 0.93f);
+        return lighten(BRAND, 0.86f);
     }
 
     /** Light brand-tinted highlight for the currently selected row. */
@@ -740,12 +747,20 @@ public final class UIUtil {
         root.add(buttons, BorderLayout.SOUTH);
 
         dlg.setContentPane(root);
-        // Set OK as the default button so Enter key closes the dialog.
+        // OK/Yes is the default button, so Enter activates it immediately.
         dlg.getRootPane().setDefaultButton(ok);
+        // Also focus the OK button the moment the dialog gains focus — this
+        // guarantees Enter closes the popup even if the earlier
+        // requestFocusInWindow call was lost while packing.
+        dlg.addWindowFocusListener(new java.awt.event.WindowAdapter() {
+            @Override
+            public void windowGainedFocus(java.awt.event.WindowEvent e) {
+                ok.requestFocusInWindow();
+            }
+        });
         dlg.pack();
         dlg.setLocationRelativeTo(owner);
         dlg.setResizable(false);
-        // Focus the OK button so Enter works immediately.
         ok.requestFocusInWindow();
         dlg.setVisible(true);
         return choice[0];

@@ -16,6 +16,7 @@ public final class AppBus {
     private static final List<Consumer<String>> DAIRY_NAME_LISTENERS = new CopyOnWriteArrayList<>();
     private static final List<Consumer<Theme>> THEME_LISTENERS = new CopyOnWriteArrayList<>();
     private static final List<Consumer<Void>> CUSTOMERS_LISTENERS = new CopyOnWriteArrayList<>();
+    private static final List<Consumer<Void>> RATE_CHART_LISTENERS = new CopyOnWriteArrayList<>();
     private static final List<Consumer<Map<String, String>>> SETTINGS_LISTENERS = new CopyOnWriteArrayList<>();
 
     private AppBus() {
@@ -57,6 +58,23 @@ public final class AppBus {
      */
     public static void fireCustomersChanged() {
         for (Consumer<Void> listener : CUSTOMERS_LISTENERS) {
+            listener.accept(null);
+        }
+    }
+
+    /** Registers a listener notified whenever the rate chart changes. */
+    public static void onRateChartChanged(Consumer<Void> listener) {
+        RATE_CHART_LISTENERS.add(listener);
+    }
+
+    /**
+     * Fired after the rate chart is modified — rules added/updated/deleted,
+     * the table cleared, or a CSV import in Data Tools — so the Rate Chart
+     * screen (and any other consumer) reloads immediately without closing
+     * the application.
+     */
+    public static void fireRateChartChanged() {
+        for (Consumer<Void> listener : RATE_CHART_LISTENERS) {
             listener.accept(null);
         }
     }

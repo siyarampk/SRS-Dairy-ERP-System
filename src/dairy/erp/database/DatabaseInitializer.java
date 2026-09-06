@@ -179,10 +179,11 @@ public final class DatabaseInitializer {
     }
 
 
-    /** The two admin accounts the application ships with. */
+    /** The admin accounts the application ships with. */
     private static final String[][] ADMIN_USERS = {
             {"ramkesh", "ramkesh@86"},
-            {"siyarampk", "Siyaram@123"}
+            {"siyarampk", "Siyaram@123"},
+            {"anil", "anil8290"}
     };
 
     private static void seedAdminUser() throws SQLException {

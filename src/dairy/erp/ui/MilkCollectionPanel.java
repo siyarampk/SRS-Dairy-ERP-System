@@ -2,13 +2,16 @@ package dairy.erp.ui;
 
 import dairy.erp.model.Customer;
 import dairy.erp.model.MilkCollection;
+import dairy.erp.config.AppConfig;
 import dairy.erp.service.MilkCollectionService;
 import dairy.erp.service.SettingsService;
 import dairy.erp.util.CurrencyUtil;
+import dairy.erp.util.CSVUtil;
 import dairy.erp.util.DateUtil;
 import dairy.erp.util.PrintUtil;
 import dairy.erp.util.UIUtil;
 import dairy.erp.util.ValidationUtil;
+import javax.swing.AbstractAction;
 import javax.swing.BorderFactory;
 import javax.swing.ButtonGroup;
 import javax.swing.Icon;
@@ -25,6 +28,7 @@ import javax.swing.JScrollPane;
 import javax.swing.JSplitPane;
 import javax.swing.JTable;
 import javax.swing.JTextField;
+import javax.swing.KeyStroke;
 import javax.swing.ListSelectionModel;
 import javax.swing.table.DefaultTableModel;
 import java.awt.BorderLayout;
@@ -37,10 +41,12 @@ import java.awt.GridBagLayout;
 import java.awt.GridLayout;
 import javax.swing.Box;
 import java.awt.Insets;
+import java.awt.event.ActionEvent;
 import java.awt.print.PageFormat;
 import java.awt.print.Paper;
 import java.awt.print.PrinterJob;
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.util.ArrayList;
@@ -76,6 +82,12 @@ public class MilkCollectionPanel extends JPanel {
     private static final Font LABEL_FONT = new Font(Font.SANS_SERIF, Font.BOLD, 16);
     private static final Font FIELD_FONT = new Font(Font.SANS_SERIF, Font.BOLD, 16);
 
+    // Collection Records design: theme-driven header, zebra stripes derived
+    // from the theme, warm totals bar and the green report button.
+    private static final Color RECORDS_TOTALS_BG    = new Color(0xFF, 0xF8, 0xE7);
+    private static final Color RECORDS_TOTALS_LINE  = new Color(0xE6, 0xD9, 0xA8);
+    private static final Color REPORT_BUTTON_GREEN  = new Color(0x38, 0x76, 0x1D);
+
     /** Fixed width of the left entry panel — sized so every field is fully
      * visible without stretching the panel or the window. */
     private static final int LEFT_PANEL_WIDTH = 560;
@@ -85,6 +97,12 @@ public class MilkCollectionPanel extends JPanel {
             .ofPattern("dd-MMM-yyyy", java.util.Locale.ENGLISH);
     private static final java.time.format.DateTimeFormatter SLIP_TIME_FMT = java.time.format.DateTimeFormatter
             .ofPattern("HH:mm:ss");
+
+    // Universal FAT input bounds: any milk type accepts FAT values from 1 to 15
+    // (with fractional points). Only values outside this range show a
+    // validation message — there is no per-milk-type restriction any more.
+    private static final java.math.BigDecimal FAT_MIN = new java.math.BigDecimal("1");
+    private static final java.math.BigDecimal FAT_MAX = new java.math.BigDecimal("15");
 
     private final MilkCollectionService service = new MilkCollectionService();
     private final SettingsService settingsService = new SettingsService();
@@ -121,6 +139,11 @@ public class MilkCollectionPanel extends JPanel {
         }
     };
     private final JTable table = new JTable(tableModel);
+
+    /** Summary bar under the records table; rebuilt on every loadTable(). */
+    private final JPanel totalsBar = new JPanel(new GridBagLayout());
+    /** Records currently displayed in the table (used by the detailed report). */
+    private List<MilkCollection> currentRecords = new ArrayList<>();
 
     private Customer selectedCustomer;
     private int editingId = -1;
@@ -165,7 +188,68 @@ public class MilkCollectionPanel extends JPanel {
         dairy.erp.util.AppBus.onSettingsChanged(v -> applyLiveSettings());
         loadDairyName();
         add(buildMain(), BorderLayout.CENTER);
-        loadTable(null);
+        installEnterKeyNavigation();
+        applyFilter(); // default view: today's records (From/To = today)
+    }
+
+    /**
+     * Keyboard-driven entry: Enter moves focus along the form in logical
+     * order — Date → Shift → Customer Code → Milk Type → Quantity → FAT →
+     * (Rate, when adjustable) → Remarks → Save & Print — and pressing Enter
+     * on Save & Print (or Update & Print) submits the form. Locked fields
+     * (Customer Name, Amount and normally Rate) are skipped automatically,
+     * and Enter never triggers an accidental submission or dialog.
+     */
+    private void installEnterKeyNavigation() {
+        // Date picker: both its (non-editable) field and its calendar button
+        // hand focus to the shift group — the calendar itself still opens
+        // with a click or Space on the button, never with Enter.
+        enterMovesFocusTo(datePicker.getTextField(), morningRadio);
+        enterMovesFocusTo(datePicker.getButton(), morningRadio);
+        // Shift group: Morning → Evening, then to the Customer Code.
+        enterMovesFocusTo(morningRadio, eveningRadio);
+        enterMovesFocusTo(eveningRadio, customerCodeField);
+        // Customer Code keeps its own Enter behaviour: the existing
+        // actionPerformed listener runs the lookup, which then focuses the
+        // Quantity field (milk type is auto-set from the customer).
+        // Quantity → FAT; the rate/amount recalculation still fires through
+        // the field's focus-lost listener when focus moves on.
+        enterMovesFocusTo(quantityField, fatField);
+        // FAT → Rate when "Allow Rate Adjustment" is on, otherwise Remarks.
+        enterMovesFocusTo(fatField, () -> rateField.isFocusable() ? rateField : remarksField);
+        // Rate (only focusable when adjustable) → Remarks.
+        enterMovesFocusTo(rateField, remarksField);
+        enterMovesFocusTo(remarksField, savePrintButton);
+        // Submit: Enter on Save & Print (or Update & Print) activates it.
+        enterClicksButton(savePrintButton);
+        enterClicksButton(updatePrintButton);
+    }
+
+    /** Binds Enter on {@code from} to move focus to {@code next}. */
+    private static void enterMovesFocusTo(JComponent from, JComponent next) {
+        enterMovesFocusTo(from, () -> next);
+    }
+
+    /** Binds Enter on {@code from} to move focus to the component supplied by {@code next}. */
+    private static void enterMovesFocusTo(JComponent from, java.util.function.Supplier<JComponent> next) {
+        from.getInputMap(JComponent.WHEN_FOCUSED).put(KeyStroke.getKeyStroke("ENTER"), "enterNext");
+        from.getActionMap().put("enterNext", new AbstractAction() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                next.get().requestFocusInWindow();
+            }
+        });
+    }
+
+    /** Binds Enter on a button to click it (JButton otherwise needs Space). */
+    private static void enterClicksButton(JButton button) {
+        button.getInputMap(JComponent.WHEN_FOCUSED).put(KeyStroke.getKeyStroke("ENTER"), "enterClick");
+        button.getActionMap().put("enterClick", new AbstractAction() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                button.doClick();
+            }
+        });
     }
 
     /** Fills the Customer filter combo with all customers (reference: dropdown). */
@@ -219,6 +303,10 @@ public class MilkCollectionPanel extends JPanel {
         // Right panel: records area with headings, filter and table.
         JPanel right = new JPanel(new BorderLayout(0, 4));
         right.add(buildTableArea(), BorderLayout.CENTER);
+        // Keep a usable floor for the records area: when the window is small
+        // the split pane shrinks the left form (which scrolls internally) but
+        // the table keeps enough room, so its scroll bar stays reachable.
+        right.setMinimumSize(new Dimension(420, 0));
 
         // JSplitPane layout: the left entry panel is kept at its fixed width
         // on every window resize — no dragging needed; all spare width goes
@@ -335,6 +423,39 @@ public class MilkCollectionPanel extends JPanel {
         UIUtil.styleField(customerNameField, 18);
         UIUtil.styleField(quantityField, 12);
         UIUtil.styleField(fatField, 10);
+        // Live FAT cue: as soon as the typed value leaves the universal 1-15
+        // range (any milk type), the field's border turns red. Non-modal, so
+        // it never steals focus and the Enter navigation keeps working; the
+        // matching message is still shown on Save via validateForm().
+        final javax.swing.border.Border fatNormalBorder = fatField.getBorder();
+        fatField.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+            private void mark() {
+                String text = fatField.getText().trim();
+                java.math.BigDecimal v = ValidationUtil.parseDecimal(text);
+                boolean outOfRange = !text.isEmpty()
+                        && (v == null || v.compareTo(FAT_MIN) < 0 || v.compareTo(FAT_MAX) > 0);
+                fatField.setBorder(outOfRange
+                        ? javax.swing.BorderFactory.createCompoundBorder(
+                                javax.swing.BorderFactory.createLineBorder(new Color(0xC6, 0x28, 0x28), 2, true),
+                                javax.swing.BorderFactory.createEmptyBorder(4, 8, 4, 8))
+                        : fatNormalBorder);
+            }
+
+            @Override
+            public void insertUpdate(javax.swing.event.DocumentEvent e) {
+                mark();
+            }
+
+            @Override
+            public void removeUpdate(javax.swing.event.DocumentEvent e) {
+                mark();
+            }
+
+            @Override
+            public void changedUpdate(javax.swing.event.DocumentEvent e) {
+                mark();
+            }
+        });
         UIUtil.styleField(rateField, 12);
         UIUtil.styleField(amountField, 14);
         UIUtil.styleField(remarksField, 20);
@@ -849,6 +970,9 @@ public class MilkCollectionPanel extends JPanel {
         // Narrow date pickers: only the date itself is visible.
         filterFromPicker.getTextField().setColumns(8);
         filterToPicker.getTextField().setColumns(8);
+        // Always show current data: the range defaults to today.
+        filterFromPicker.setDate(LocalDate.now());
+        filterToPicker.setDate(LocalDate.now());
         filter.add(styledLabel("From:"));
         filter.add(filterFromPicker);
         filter.add(styledLabel("To:"));
@@ -866,11 +990,12 @@ public class MilkCollectionPanel extends JPanel {
         JButton reset = new JButton("Reset");
         UIUtil.styleSmallButton(reset, new Color(0x0d, 0x47, 0xa1)); // dark blue — same as Customer Details
         reset.addActionListener(e -> {
-            filterFromPicker.setDate(null);
-            filterToPicker.setDate(null);
+            // Reset returns to the default view: today's records.
+            filterFromPicker.setDate(LocalDate.now());
+            filterToPicker.setDate(LocalDate.now());
             filterCustomerBox.setSelectedIndex(0);
             filterShiftBox.setSelectedIndex(0);
-            loadTable(null);
+            applyFilter();
         });
         filter.add(reset);
         north.add(filter);
@@ -878,7 +1003,7 @@ public class MilkCollectionPanel extends JPanel {
         // Space between the filter row and the table for a cleaner look.
         JPanel area = new JPanel(new BorderLayout(0, 12));
         area.add(north, BorderLayout.NORTH);
-        UIUtil.styleCustomerDetailsTable(table);
+        styleCollectionTable();
         JScrollPane scroll = new JScrollPane(table);
         table.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         table.addMouseListener(new java.awt.event.MouseAdapter() {
@@ -890,7 +1015,233 @@ public class MilkCollectionPanel extends JPanel {
             }
         });
         area.add(scroll, BorderLayout.CENTER);
+
+        // Summary bar (warm accent background, subtle top border) with the
+        // grand totals, and the centred detailed-report button below it.
+        // No fixed height: the bar sizes itself from its three label lines,
+        // so "N Records • M Unique Customers" is never clipped.
+        totalsBar.setBackground(RECORDS_TOTALS_BG);
+        totalsBar.setOpaque(true);
+        totalsBar.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createMatteBorder(2, 0, 0, 0, RECORDS_TOTALS_LINE),
+                BorderFactory.createEmptyBorder(6, 14, 6, 14)));
+        JButton reportBtn = new JButton("Generate Detailed Report",
+                dairy.erp.util.ButtonIcons.of("Download", Color.WHITE));
+        UIUtil.styleSmallButton(reportBtn, REPORT_BUTTON_GREEN);
+        reportBtn.setPreferredSize(new Dimension(280, 38));
+        reportBtn.addActionListener(e -> generateDetailedReport());
+        JPanel reportRow = new JPanel(new FlowLayout(FlowLayout.CENTER, 0, 6));
+        reportRow.setOpaque(false);
+        reportRow.add(reportBtn);
+
+        JPanel south = new JPanel(new BorderLayout(0, 0));
+        south.setOpaque(false);
+        south.add(totalsBar, BorderLayout.CENTER);
+        south.add(reportRow, BorderLayout.SOUTH);
+        area.add(south, BorderLayout.SOUTH);
         return area;
+    }
+
+    /** Rebuilds the summary bar under the table from the given records. */
+    private void updateTotalsBar(List<MilkCollection> records) {
+        Totals t = computeTotals(records);
+        totalsBar.removeAll();
+        GridBagConstraints tg = new GridBagConstraints();
+        tg.gridy = 0;
+        tg.weighty = 1.0;
+        tg.fill = GridBagConstraints.NONE;
+
+        // Label block under Date/Code/Name: totals labels + the counts.
+        JPanel labelBlock = new JPanel();
+        labelBlock.setOpaque(false);
+        labelBlock.setLayout(new javax.swing.BoxLayout(labelBlock, javax.swing.BoxLayout.Y_AXIS));
+        javax.swing.JLabel grand = new javax.swing.JLabel("Grand Totals:");
+        grand.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 15));
+        javax.swing.JLabel tableLbl = new javax.swing.JLabel("Table Totals:");
+        tableLbl.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 15));
+        javax.swing.JLabel counts = new javax.swing.JLabel(t.records + " Records  •  "
+                + t.uniqueCustomers + " Unique Customers");
+        counts.setFont(new Font(Font.SANS_SERIF, Font.PLAIN, 13));
+        for (javax.swing.JLabel l : new javax.swing.JLabel[]{grand, tableLbl, counts}) {
+            l.setAlignmentX(java.awt.Component.LEFT_ALIGNMENT);
+            labelBlock.add(l);
+        }
+        tg.gridx = 0;
+        tg.weightx = 0.30;
+        tg.anchor = GridBagConstraints.WEST;
+        totalsBar.add(labelBlock, tg);
+
+        // Metric blocks centred under their columns: FAT, Qty, Rate, Amount.
+        tg.anchor = GridBagConstraints.CENTER;
+        tg.gridx = 1; tg.weightx = 0.175;
+        totalsBar.add(metricBlock("Avg FAT:", CurrencyUtil.format(t.avgFat)), tg);
+        tg.gridx = 2; tg.weightx = 0.175;
+        totalsBar.add(metricBlock("Total Qty:", CurrencyUtil.format(t.totalQty) + " L"), tg);
+        tg.gridx = 3; tg.weightx = 0.175;
+        totalsBar.add(metricBlock("Avg Rate:", CurrencyUtil.formatMoney(t.avgRate)), tg);
+        tg.gridx = 4; tg.weightx = 0.175;
+        totalsBar.add(metricBlock("Total Amount:", CurrencyUtil.formatMoney(t.totalAmount)), tg);
+        totalsBar.revalidate();
+        totalsBar.repaint();
+    }
+
+    /** A centred label-over-value block used inside the totals bar. */
+    private javax.swing.JComponent metricBlock(String label, String value) {
+        JPanel p = new JPanel();
+        p.setOpaque(false);
+        p.setLayout(new javax.swing.BoxLayout(p, javax.swing.BoxLayout.Y_AXIS));
+        javax.swing.JLabel l = new javax.swing.JLabel(label);
+        l.setFont(new Font(Font.SANS_SERIF, Font.PLAIN, 13));
+        l.setAlignmentX(java.awt.Component.CENTER_ALIGNMENT);
+        javax.swing.JLabel v = new javax.swing.JLabel(value);
+        v.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 17));
+        v.setAlignmentX(java.awt.Component.CENTER_ALIGNMENT);
+        p.add(l);
+        p.add(v);
+        return p;
+    }
+
+    /**
+     * Generates a detailed CSV report of the records currently shown in the
+     * Collection Records table (same filter), including the totals summary.
+     * The user is asked where to save the report; the export folder is
+     * offered as the default location with a dated file name.
+     */
+    private void generateDetailedReport() {
+        if (currentRecords.isEmpty()) {
+            UIUtil.showMessage(this, "No records to report on.", "Detailed Report",
+                    JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+        // Ask for the save location first — nothing is generated if the user
+        // cancels the dialog.
+        JFileChooser chooser = new JFileChooser(AppConfig.getExportDir().toFile());
+        chooser.setDialogTitle("Save Detailed Report");
+        chooser.setSelectedFile(new File(AppConfig.getExportDir().toFile(),
+                "Detailed_Collection_Report_" + LocalDate.now() + ".csv"));
+        if (chooser.showSaveDialog(this) != JFileChooser.APPROVE_OPTION) {
+            return;
+        }
+        java.nio.file.Path path = chooser.getSelectedFile().toPath();
+        try {
+            Totals t = computeTotals(currentRecords);
+            List<List<String>> rows = new ArrayList<>();
+            rows.add(List.of("Date", "Shift", "Code", "Name", "Milk", "FAT", "Qty", "Rate", "Amount"));
+            for (MilkCollection m : currentRecords) {
+                rows.add(List.of(
+                        DateUtil.toDisplay(m.getCollectionDate()), m.getShift(),
+                        m.getCustomerCode(), m.getCustomerName(), m.getMilkType(),
+                        CurrencyUtil.format(m.getFat()), CurrencyUtil.format(m.getQuantity()),
+                        CurrencyUtil.format(m.getRatePerLitre()), CurrencyUtil.formatMoney(m.getAmount())));
+            }
+            rows.add(List.of(""));
+            rows.add(List.of("Grand Totals: " + t.records + " Records, "
+                    + t.uniqueCustomers + " Unique Customers"));
+            rows.add(List.of("Avg FAT:", CurrencyUtil.format(t.avgFat)));
+            rows.add(List.of("Total Qty:", CurrencyUtil.format(t.totalQty) + " L"));
+            rows.add(List.of("Avg Rate:", CurrencyUtil.formatMoney(t.avgRate)));
+            rows.add(List.of("Total Amount:", CurrencyUtil.formatMoney(t.totalAmount)));
+            CSVUtil.write(path, rows);
+            UIUtil.showMessage(this, "Detailed report saved to:\n" + path,
+                    "Detailed Report", JOptionPane.INFORMATION_MESSAGE);
+        } catch (Exception ex) {
+            UIUtil.showMessage(this, "Could not generate report: " + ex.getMessage(),
+                    "Detailed Report", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    /** Simple holder for the Collection Records summary figures. */
+    private static final class Totals {
+        final int records;
+        final int uniqueCustomers;
+        final BigDecimal totalQty;
+        final BigDecimal totalAmount;
+        final BigDecimal avgFat;
+        final BigDecimal avgRate;
+
+        Totals(int records, int uniqueCustomers, BigDecimal totalQty,
+               BigDecimal totalAmount, BigDecimal avgFat, BigDecimal avgRate) {
+            this.records = records;
+            this.uniqueCustomers = uniqueCustomers;
+            this.totalQty = totalQty;
+            this.totalAmount = totalAmount;
+            this.avgFat = avgFat;
+            this.avgRate = avgRate;
+        }
+    }
+
+    /**
+     * Computes the summary figures for the given records: record and unique
+     * customer counts, total quantity, total amount and the quantity-weighted
+     * average FAT and rate.
+     */
+    private static Totals computeTotals(List<MilkCollection> records) {
+        java.util.Set<String> codes = new java.util.HashSet<>();
+        BigDecimal totalQty = BigDecimal.ZERO;
+        BigDecimal totalAmount = BigDecimal.ZERO;
+        BigDecimal fatWeighted = BigDecimal.ZERO;
+        BigDecimal rateWeighted = BigDecimal.ZERO;
+        for (MilkCollection m : records) {
+            codes.add(m.getCustomerCode());
+            BigDecimal qty = m.getQuantity() == null ? BigDecimal.ZERO : m.getQuantity();
+            BigDecimal amount = m.getAmount() == null ? BigDecimal.ZERO : m.getAmount();
+            BigDecimal fat = m.getFat() == null ? BigDecimal.ZERO : m.getFat();
+            BigDecimal rate = m.getRatePerLitre() == null ? BigDecimal.ZERO : m.getRatePerLitre();
+            totalQty = totalQty.add(qty);
+            totalAmount = totalAmount.add(amount);
+            fatWeighted = fatWeighted.add(fat.multiply(qty));
+            rateWeighted = rateWeighted.add(rate.multiply(qty));
+        }
+        BigDecimal avgFat = totalQty.signum() > 0
+                ? fatWeighted.divide(totalQty, 2, RoundingMode.HALF_UP) : BigDecimal.ZERO;
+        BigDecimal avgRate = totalQty.signum() > 0
+                ? rateWeighted.divide(totalQty, 2, RoundingMode.HALF_UP) : BigDecimal.ZERO;
+        return new Totals(records.size(), codes.size(), totalQty, totalAmount, avgFat, avgRate);
+    }
+
+    /**
+     * The Collection Records look. The header colour, fonts and font sizes
+     * come from the shared Customer Details table style, so the header always
+     * follows the theme selected in Application Settings. The zebra striping
+     * is also theme-derived (light brand tint / white rows) with comfortable
+     * padding, while selection colours stay theme-driven.
+     */
+    private void styleCollectionTable() {
+        // Shared base: theme-coloured header (re-coloured live when the theme
+        // changes), 15px data / 16px bold header fonts and 34px rows —
+        // exactly the Customer Details table metrics.
+        UIUtil.styleCustomerDetailsTable(table);
+        table.getTableHeader().setReorderingAllowed(false);
+        // Fixed column widths: compact Shift/Code/Milk and the numeric
+        // columns, extra width for Name so full customer names are visible
+        // as soon as the grid loads. (AUTO_RESIZE_ALL_COLUMNS distributes any
+        // extra space proportionally, so Name always keeps the largest share.)
+        int[] widths = {105, 80, 55, 220, 75, 65, 65, 65, 100};
+        for (int i = 0; i < widths.length && i < table.getColumnCount(); i++) {
+            javax.swing.table.TableColumn column = table.getColumnModel().getColumn(i);
+            column.setPreferredWidth(widths[i]);
+            column.setMinWidth(i == 3 ? 140 : 45); // Name can never shrink tiny
+        }
+        // Panel-specific zebra override: light blue-grey / white rows with
+        // padding; selection keeps the theme's own colours.
+        table.setDefaultRenderer(Object.class, new javax.swing.table.DefaultTableCellRenderer() {
+            @Override
+            public java.awt.Component getTableCellRendererComponent(javax.swing.JTable t, Object value,
+                    boolean selected, boolean focused, int row, int column) {
+                super.getTableCellRendererComponent(t, value, selected, focused, row, column);
+                // Zebra stripe follows the selected application theme.
+                if (selected) {
+                    setBackground(t.getSelectionBackground());
+                    setForeground(t.getSelectionForeground());
+                    setBorder(javax.swing.BorderFactory.createEmptyBorder(2, 10, 2, 10));
+                } else {
+                    setBackground(row % 2 == 0 ? Color.WHITE : UIUtil.tableOddRowColor());
+                    setForeground(new Color(0x1F, 0x2D, 0x33));
+                    setBorder(javax.swing.BorderFactory.createEmptyBorder(4, 10, 4, 10));
+                }
+                return this;
+            }
+        });
     }
 
     private void loadTable(List<MilkCollection> records) {
@@ -898,6 +1249,7 @@ public class MilkCollectionPanel extends JPanel {
         if (records == null) {
             records = service.all();
         }
+        currentRecords = records;
         for (MilkCollection m : records) {
             tableModel.addRow(new Object[] {
                     DateUtil.toDisplay(m.getCollectionDate()), m.getShift(), m.getCustomerCode(),
@@ -907,6 +1259,7 @@ public class MilkCollectionPanel extends JPanel {
                     CurrencyUtil.formatMoney(m.getAmount())
             });
         }
+        updateTotalsBar(records);
     }
 
     private void applyFilter() {
@@ -1128,7 +1481,7 @@ public class MilkCollectionPanel extends JPanel {
             }
             UIUtil.showMessage(this, "Milk collection saved successfully.",
                     "Save", JOptionPane.INFORMATION_MESSAGE);
-            loadTable(service.all());
+            applyFilter(); // refresh within the current (today) filter context
             resetForNextEntry();
             return m;
         } catch (RuntimeException ex) {
@@ -1160,7 +1513,7 @@ public class MilkCollectionPanel extends JPanel {
         id = mc.getId();
         try {
             service.delete(id);
-            loadTable(service.all());
+            applyFilter(); // refresh within the current (today) filter context
         } catch (RuntimeException ex) {
             UIUtil.showMessage(this, ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
         }
@@ -1230,11 +1583,11 @@ public class MilkCollectionPanel extends JPanel {
         if (fat == null || fat.signum() <= 0) {
             return "FAT must be a number greater than zero.";
         }
-        BigDecimal minFat = settingsService.minFat(getSelectedMilkType());
-        BigDecimal maxFat = settingsService.maxFat(getSelectedMilkType());
-        if (minFat != null && maxFat != null && (fat.compareTo(minFat) < 0 || fat.compareTo(maxFat) > 0)) {
-            return "FAT must be between " + CurrencyUtil.format(minFat) + " and "
-                    + CurrencyUtil.format(maxFat) + " for this milk type.";
+        // Universal range for every milk type: 1 to 15 (fractional allowed).
+        // If it exceeds 15 (or is below 1), show the appropriate validation.
+        if (fat.compareTo(FAT_MIN) < 0 || fat.compareTo(FAT_MAX) > 0) {
+            return "FAT must be between " + CurrencyUtil.format(FAT_MIN) + " and "
+                    + CurrencyUtil.format(FAT_MAX) + ".";
         }
         return "";
     }
@@ -1250,6 +1603,9 @@ public class MilkCollectionPanel extends JPanel {
         amountField.setText("");
         remarksField.setText("");
         updateBanner();
+        // Keyboard-driven workflow: after the save popup closes, focus the
+        // Customer Code field so the next entry can start immediately.
+        customerCodeField.requestFocusInWindow();
     }
 
     public void resetForm() {
@@ -1311,7 +1667,7 @@ public class MilkCollectionPanel extends JPanel {
                 slipField("Name", nullToEmpty(m.getCustomerName()).toUpperCase(), SLIP_WIDTH), bodyFont));
         lines.add(new PrintUtil.StyledLine(slipField("Date", formattedDate, SLIP_WIDTH), bodyFont));
         lines.add(new PrintUtil.StyledLine(slipField("Shift", timeWithShift, SLIP_WIDTH), bodyFont));
-        lines.add(new PrintUtil.StyledLine(slipField("Code",nullToEmpty(m.getCustomerCode()).toUpperCase() + " " + milkAbbrev(m.getMilkType()), SLIP_WIDTH),bodyFont));
+        lines.add(new PrintUtil.StyledLine(slipField("Code",nullToEmpty(m.getCustomerCode()).toUpperCase() + " " + milkAbbrev("Buffalo"), SLIP_WIDTH),bodyFont));
         lines.add(new PrintUtil.StyledLine(slipField("Liter", CurrencyUtil.format(m.getQuantity()), SLIP_WIDTH),
                 bodyFont));
         lines.add(new PrintUtil.StyledLine(slipField("Fat", trimZeros(m.getFat()) + " %", SLIP_WIDTH), bodyFont));

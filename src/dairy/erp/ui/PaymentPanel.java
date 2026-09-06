@@ -10,9 +10,11 @@ import dairy.erp.util.PrintUtil;
 import dairy.erp.util.UIUtil;
 import dairy.erp.util.ValidationUtil;
 
+import javax.swing.AbstractAction;
 import javax.swing.BorderFactory;
 import javax.swing.JButton;
 import javax.swing.JComboBox;
+import javax.swing.JComponent;
 import javax.swing.JFrame;
 import javax.swing.JLabel;
 import javax.swing.JOptionPane;
@@ -20,6 +22,7 @@ import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JTable;
 import javax.swing.JTextField;
+import javax.swing.KeyStroke;
 import javax.swing.ListSelectionModel;
 import javax.swing.JSplitPane;
 import javax.swing.table.DefaultTableModel;
@@ -34,6 +37,7 @@ import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.GridLayout;
 import java.awt.Insets;
+import java.awt.event.ActionEvent;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.ArrayList;
@@ -132,7 +136,59 @@ public class PaymentPanel extends JPanel {
         });
         loadDairyName();
         add(buildMain(), BorderLayout.CENTER);
+        installEnterKeyNavigation();
         loadTable(paymentService.search(0, null, null));
+    }
+
+    /**
+     * Keyboard-driven entry: Enter moves focus along the form in logical
+     * order — Payment Date → Payment Mode → Customer Code → Amount →
+     * Reference → Remarks → Save & Print — and pressing Enter on Save & Print
+     * (or Update & Print) submits the form. The read-only Customer Name is
+     * skipped automatically, and Enter never triggers an accidental
+     * submission or dialog.
+     */
+    private void installEnterKeyNavigation() {
+        // Date picker: both its (non-editable) field and its calendar button
+        // hand focus to the Payment Mode combo — the calendar itself still
+        // opens with a click or Space on the button, never with Enter.
+        enterMovesFocusTo(datePicker.getTextField(), modeBox);
+        enterMovesFocusTo(datePicker.getButton(), modeBox);
+        // Payment Mode combo: Enter hands focus to the Customer Code field
+        // (the mode itself is changed with the mouse or the arrow keys).
+        enterMovesFocusTo(modeBox, customerCodeField);
+        // Customer Code keeps its own Enter behaviour: the existing
+        // actionPerformed listener runs the lookup, which then focuses the
+        // Amount field.
+        // Amount → Reference → Remarks → Save & Print.
+        enterMovesFocusTo(amountField, referenceField);
+        enterMovesFocusTo(referenceField, remarksField);
+        enterMovesFocusTo(remarksField, savePrintButton);
+        // Submit: Enter on Save & Print (or Update & Print) activates it.
+        enterClicksButton(savePrintButton);
+        enterClicksButton(updatePrintButton);
+    }
+
+    /** Binds Enter on {@code from} to move focus to {@code next}. */
+    private static void enterMovesFocusTo(JComponent from, JComponent next) {
+        from.getInputMap(JComponent.WHEN_FOCUSED).put(KeyStroke.getKeyStroke("ENTER"), "enterNext");
+        from.getActionMap().put("enterNext", new AbstractAction() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                next.requestFocusInWindow();
+            }
+        });
+    }
+
+    /** Binds Enter on a button to click it (JButton otherwise needs Space). */
+    private static void enterClicksButton(JButton button) {
+        button.getInputMap(JComponent.WHEN_FOCUSED).put(KeyStroke.getKeyStroke("ENTER"), "enterClick");
+        button.getActionMap().put("enterClick", new AbstractAction() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                button.doClick();
+            }
+        });
     }
 
     /** Field fonts + rounded soft borders matching the reference design. */

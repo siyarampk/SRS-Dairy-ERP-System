@@ -287,6 +287,9 @@ public class RateChartPanel extends JPanel {
         add(buildMain(), BorderLayout.CENTER);
         resetForNewEntry();
         loadAll();
+        // Live propagation: reload the grid whenever the rate chart changes
+        // anywhere (Data Tools import, clear, ...) — no restart needed.
+        dairy.erp.util.AppBus.onRateChartChanged(e -> loadAll());
     }
 
     /** Shows the dairy name in the golden logo style — identical on every panel. */
@@ -453,6 +456,7 @@ public class RateChartPanel extends JPanel {
                     JOptionPane.INFORMATION_MESSAGE);
             loadAll();
             clearFields();
+            dairy.erp.util.AppBus.fireRateChartChanged();
         } catch (SQLException e) {
             UIUtil.showMessage(this, "Could not save: " + e.getMessage(),
                     "Error", JOptionPane.ERROR_MESSAGE);
@@ -478,6 +482,7 @@ public class RateChartPanel extends JPanel {
                     JOptionPane.INFORMATION_MESSAGE);
             loadAll();
             clearFields();
+            dairy.erp.util.AppBus.fireRateChartChanged();
         } catch (SQLException e) {
             UIUtil.showMessage(this, "Could not update: " + e.getMessage(),
                     "Error", JOptionPane.ERROR_MESSAGE);
@@ -507,6 +512,7 @@ public class RateChartPanel extends JPanel {
                     JOptionPane.INFORMATION_MESSAGE);
             loadAll();
             clearFields();
+            dairy.erp.util.AppBus.fireRateChartChanged();
         } catch (SQLException e) {
             UIUtil.showMessage(this, "Could not delete: " + e.getMessage(),
                     "Error", JOptionPane.ERROR_MESSAGE);
@@ -590,9 +596,10 @@ public class RateChartPanel extends JPanel {
         public java.awt.Component getTableCellRendererComponent(JTable t, Object value,
                 boolean isSelected, boolean hasFocus, int row, int column) {
             text = value == null ? "" : value.toString().trim();
+            // Row colours follow the selected application theme.
             rowBackground = isSelected
-                    ? new Color(0xd2, 0xec, 0xd9)
-                    : (row % 2 == 0 ? Color.WHITE : new Color(0xe8, 0xf1, 0xf7));
+                    ? UIUtil.tableSelectedRowColor()
+                    : (row % 2 == 0 ? Color.WHITE : UIUtil.tableOddRowColor());
             return this;
         }
 

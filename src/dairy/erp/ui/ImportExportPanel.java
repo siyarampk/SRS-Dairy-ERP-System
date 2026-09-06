@@ -3,13 +3,16 @@ package dairy.erp.ui;
 import dairy.erp.config.AppConfig;
 import dairy.erp.dao.CustomerDAO;
 import dairy.erp.dao.PaymentDAO;
+import dairy.erp.dao.RateChartDAO;
 import dairy.erp.model.Customer;
 import dairy.erp.model.MilkCollection;
 import dairy.erp.model.Payment;
+import dairy.erp.model.RateChart;
 import dairy.erp.service.BackupService;
 import dairy.erp.service.CustomerService;
 import dairy.erp.service.MilkCollectionService;
 import dairy.erp.service.ReportService;
+import dairy.erp.util.AppBus;
 import dairy.erp.util.ButtonIcons;
 import dairy.erp.util.CSVUtil;
 import dairy.erp.util.CurrencyUtil;
@@ -60,9 +63,14 @@ public class ImportExportPanel extends JPanel {
     private final BackupService backupService = new BackupService();
     private final CustomerDAO customerDAO = new CustomerDAO();
     private final PaymentDAO paymentDAO = new PaymentDAO();
+    private final RateChartDAO rateChartDAO = new RateChartDAO();
 
+    /** Selects which CSV flavour the Import button works on. */
+    private final JComboBox<String> importTypeBox = new JComboBox<>(new String[]{
+            "Milk Collection", "Rate Chart"});
     private final JComboBox<String> exportTypeBox = new JComboBox<>(new String[]{
-            "Customers", "Milk Collection", "Payments", "Customer Ledger", "Daily Report", "Monthly Report"});
+            "Customers", "Milk Collection", "Payments", "Rate Chart", "Customer Ledger",
+            "Daily Report", "Monthly Report"});
     private final JTextArea logArea = new JTextArea(10, 70);
 
     public ImportExportPanel(String username) {
@@ -152,14 +160,30 @@ public class ImportExportPanel extends JPanel {
     }
 
     private JPanel buildImportCard() {
-        // Compact card like the reference: coloured title row, then one
-        // full-width icon button.
+        // Compact card like the reference: coloured title row, then one row
+        // with [ Template ] [ type dropdown ] [ Import CSV ].
         JPanel importCard = toolCard("IMPORT", new Color(0x45, 0xA2, 0xB8)); // teal
+        JPanel importRow = new JPanel(new BorderLayout(8, 0));
+        importRow.setOpaque(false);
+
+        JButton templateBtn = new JButton("Template", ButtonIcons.of("Download", Color.WHITE));
+        UIUtil.styleSmallButton(templateBtn, new Color(0x60, 0x7D, 0x8B)); // slate
+        templateBtn.setPreferredSize(new Dimension(140, 40));
+        templateBtn.setToolTipText("Download a sample CSV template for the selected import type");
+        templateBtn.addActionListener(e -> downloadTemplate());
+
+        importTypeBox.setPreferredSize(new Dimension(120, 38));
+        importTypeBox.setMaximumSize(new Dimension(Integer.MAX_VALUE, 38));
+
         JButton importBtn = new JButton("Import CSV", ButtonIcons.of("Upload", Color.WHITE));
         UIUtil.styleSmallButton(importBtn, new Color(0x45, 0xA2, 0xB8)); // teal
-        importBtn.setPreferredSize(new Dimension(200, 40));
+        importBtn.setPreferredSize(new Dimension(170, 40));
         importBtn.addActionListener(e -> importCsv());
-        importCard.add(importBtn, BorderLayout.SOUTH); // stretches full card width
+
+        importRow.add(templateBtn, BorderLayout.WEST);
+        importRow.add(importTypeBox, BorderLayout.CENTER);
+        importRow.add(importBtn, BorderLayout.EAST);
+        importCard.add(importRow, BorderLayout.SOUTH);
         return importCard;
     }
 
@@ -251,6 +275,15 @@ public class ImportExportPanel extends JPanel {
             return;
         }
         File file = chooser.getSelectedFile();
+        String type = (String) importTypeBox.getSelectedItem();
+        if ("Rate Chart".equals(type)) {
+            importRateChart(file);
+        } else {
+            importMilkCsv(file);
+        }
+    }
+
+    private void importMilkCsv(File file) {
         try {
             List<List<String>> rows = CSVUtil.read(file.toPath());
             if (rows.size() < 2) {
@@ -346,6 +379,173 @@ public class ImportExportPanel extends JPanel {
     }
 
 
+    private void importRateChart(File file) {
+        try {
+            List<List<String>> rows = CSVUtil.read(file.toPath());
+            if (rows.size() < 2) {
+                UIUtil.showMessage(this, "CSV has no data rows.", "Import",
+                        JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+            if (!isRateHeader(rows.get(0))) {
+                UIUtil.showMessage(this,
+                        "Header must be: MilkType,FAT Min,FAT Max,SNF Min,SNF Max,"
+                                + "Rate per Litre,Effective From,Effective To,Active",
+                        "Import", JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+            List<String> errors = new ArrayList<>();
+            List<RateChart> valid = new ArrayList<>();
+            for (int i = 1; i < rows.size(); i++) {
+                List<String> row = rows.get(i);
+                if (row.size() < 9) {
+                    errors.add("Row " + (i + 1) + ": not enough columns (expected 9).");
+                    continue;
+                }
+                String milkType = milkTypeOrNull(row.get(0));
+                if (milkType == null) {
+                    errors.add("Row " + (i + 1) + ": milk type must be Cow, Buffalo or Mix.");
+                }
+                BigDecimal fatMin = ValidationUtil.parseDecimal(row.get(1));
+                BigDecimal fatMax = ValidationUtil.parseDecimal(row.get(2));
+                BigDecimal snfMin = ValidationUtil.parseDecimal(row.get(3));
+                BigDecimal snfMax = ValidationUtil.parseDecimal(row.get(4));
+                BigDecimal rate = ValidationUtil.parseDecimal(row.get(5));
+                boolean ok = true;
+                if (fatMin == null || fatMin.signum() < 0) { errors.add("Row " + (i + 1) + ": invalid FAT min."); ok = false; }
+                if (fatMax == null || fatMax.signum() < 0) { errors.add("Row " + (i + 1) + ": invalid FAT max."); ok = false; }
+                if (snfMin == null || snfMin.signum() < 0) { errors.add("Row " + (i + 1) + ": invalid SNF min."); ok = false; }
+                if (snfMax == null || snfMax.signum() < 0) { errors.add("Row " + (i + 1) + ": invalid SNF max."); ok = false; }
+                if (!ValidationUtil.isPositive(rate)) { errors.add("Row " + (i + 1) + ": rate must be greater than zero."); ok = false; }
+                if (fatMin != null && fatMax != null && fatMin.compareTo(fatMax) > 0) {
+                    errors.add("Row " + (i + 1) + ": FAT min cannot be greater than FAT max.");
+                    ok = false;
+                }
+                if (snfMin != null && snfMax != null && snfMin.compareTo(snfMax) > 0) {
+                    errors.add("Row " + (i + 1) + ": SNF min cannot be greater than SNF max.");
+                    ok = false;
+                }
+                String fromText = row.get(6).trim();
+                String toText = row.get(7).trim();
+                LocalDate from = DateUtil.parse(fromText);
+                if (from == null) {
+                    from = DateUtil.parseDb(fromText);
+                }
+                LocalDate to = DateUtil.parse(toText);
+                if (to == null) {
+                    to = DateUtil.parseDb(toText);
+                }
+                if (from == null) {
+                    errors.add("Row " + (i + 1) + ": invalid Effective From date '" + fromText
+                            + "' (use dd-MM-yyyy or yyyy-MM-dd).");
+                    ok = false;
+                }
+                if (to == null) {
+                    errors.add("Row " + (i + 1) + ": invalid Effective To date '" + toText
+                            + "' (use dd-MM-yyyy or yyyy-MM-dd).");
+                    ok = false;
+                }
+                if (from != null && to != null && from.isAfter(to)) {
+                    errors.add("Row " + (i + 1) + ": Effective From cannot be after Effective To.");
+                    ok = false;
+                }
+                Boolean active = parseActive(row.get(8));
+                if (active == null) {
+                    errors.add("Row " + (i + 1) + ": Active must be Yes or No.");
+                    ok = false;
+                }
+                if (!ok || milkType == null) {
+                    continue;
+                }
+                RateChart r = new RateChart();
+                r.setMilkType(milkType);
+                r.setFatMin(fatMin);
+                r.setFatMax(fatMax);
+                r.setSnfMin(snfMin);
+                r.setSnfMax(snfMax);
+                r.setRatePerLitre(rate);
+                r.setEffectiveFrom(from);
+                r.setEffectiveTo(to);
+                r.setActive(active);
+                valid.add(r);
+            }
+            if (!errors.isEmpty()) {
+                StringBuilder sb = new StringBuilder("Validation errors — nothing was imported:\n");
+                for (String e : errors) {
+                    sb.append("  ").append(e).append('\n');
+                }
+                append(sb.toString());
+                UIUtil.showMessage(this, sb.toString(), "Import Validation",
+                        JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+            if (valid.isEmpty()) {
+                UIUtil.showMessage(this, "No valid rows to import.", "Import",
+                        JOptionPane.INFORMATION_MESSAGE);
+                return;
+            }
+            // Ask whether to clear the existing rate chart first.
+            boolean clearFirst = UIUtil.confirm(this,
+                    "Import " + valid.size() + " rate rule(s).\n\n"
+                            + "Yes = CLEAR the existing rate chart first, then import\n"
+                            + "No  = keep existing rules and add these on top",
+                    "Import Rate Chart") == JOptionPane.YES_OPTION;
+            int count = clearFirst
+                    ? rateChartDAO.replaceRules(valid)
+                    : rateChartDAO.importRules(valid);
+            append((clearFirst ? "Replaced rate chart: " : "Imported ")
+                    + count + " of " + valid.size() + " rate rules.");
+            UIUtil.showMessage(this,
+                    (clearFirst ? "Rate chart replaced with " : "Imported ")
+                            + count + " rate rule(s) successfully.",
+                    "Import Result", JOptionPane.INFORMATION_MESSAGE);
+            LOG.info("Rate chart CSV import completed. Replaced=" + clearFirst
+                    + " Rules=" + count);
+            // Live propagation: the Rate Chart screen refreshes immediately.
+            AppBus.fireRateChartChanged();
+        } catch (Exception ex) {
+            LOG.severe("Rate chart CSV import failed: " + ex.getMessage());
+            UIUtil.showMessage(this, "Import failed: " + ex.getMessage(),
+                    "Import", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    /** Normalises a CSV milk-type value to Cow/Buffalo/Mix, or null if unknown. */
+    private String milkTypeOrNull(String value) {
+        String v = value == null ? "" : value.trim();
+        if ("cow".equalsIgnoreCase(v)) {
+            return "Cow";
+        }
+        if ("buffalo".equalsIgnoreCase(v)) {
+            return "Buffalo";
+        }
+        if ("mix".equalsIgnoreCase(v)) {
+            return "Mix";
+        }
+        return null;
+    }
+
+    /**
+     * Parses the Active column: Yes/No (any case), true/false, 1/0.
+     * Blank defaults to Yes. Returns null when the value is unrecognised.
+     */
+    private Boolean parseActive(String value) {
+        String v = value == null ? "" : value.trim();
+        if (v.isEmpty() || "yes".equalsIgnoreCase(v) || "true".equalsIgnoreCase(v) || "1".equals(v)) {
+            return Boolean.TRUE;
+        }
+        if ("no".equalsIgnoreCase(v) || "false".equalsIgnoreCase(v) || "0".equals(v)) {
+            return Boolean.FALSE;
+        }
+        return null;
+    }
+
+    private boolean isRateHeader(List<String> header) {
+        return header.size() >= 9
+                && "milktype".equalsIgnoreCase(header.get(0).trim())
+                && "fat min".equalsIgnoreCase(header.get(1).trim());
+    }
+
     private void exportCsv() {
         String type = (String) exportTypeBox.getSelectedItem();
         JFileChooser chooser = new JFileChooser(AppConfig.getExportDir().toFile());
@@ -361,6 +561,7 @@ public class ImportExportPanel extends JPanel {
                 case "Customers": exportCustomers(path); break;
                 case "Milk Collection": exportMilk(path); break;
                 case "Payments": exportPayments(path); break;
+                case "Rate Chart": exportRateChart(path); break;
                 case "Customer Ledger": exportLedger(path); break;
                 case "Daily Report": exportDailyReport(path); break;
                 default: exportMonthlyReport(path); break;
@@ -388,6 +589,60 @@ public class ImportExportPanel extends JPanel {
                     DateUtil.toDisplay(c.getRegistrationDate())));
         }
         CSVUtil.write(path, rows);
+    }
+
+    private void exportRateChart(Path path) throws Exception {
+        List<List<String>> rows = new ArrayList<>();
+        rows.add(listOf("MilkType", "FAT Min", "FAT Max", "SNF Min", "SNF Max",
+                "Rate per Litre", "Effective From", "Effective To", "Active"));
+        for (RateChart r : rateChartDAO.findAll()) {
+            rows.add(listOf(r.getMilkType(),
+                    r.getFatMin() == null ? "" : r.getFatMin().toPlainString(),
+                    r.getFatMax() == null ? "" : r.getFatMax().toPlainString(),
+                    r.getSnfMin() == null ? "" : r.getSnfMin().toPlainString(),
+                    r.getSnfMax() == null ? "" : r.getSnfMax().toPlainString(),
+                    r.getRatePerLitre() == null ? "" : r.getRatePerLitre().toPlainString(),
+                    DateUtil.toDisplay(r.getEffectiveFrom()),
+                    DateUtil.toDisplay(r.getEffectiveTo()),
+                    r.isActive() ? "Yes" : "No"));
+        }
+        CSVUtil.write(path, rows);
+    }
+
+    /** Saves a ready-filled CSV template for the selected import type. */
+    private void downloadTemplate() {
+        String type = (String) importTypeBox.getSelectedItem();
+        JFileChooser chooser = new JFileChooser(AppConfig.getExportDir().toFile());
+        chooser.setDialogTitle("Save Import Template");
+        chooser.setSelectedFile(new File(AppConfig.getExportDir().toFile(),
+                "Template_" + type.replace(' ', '_') + ".csv"));
+        if (chooser.showSaveDialog(this) != JFileChooser.APPROVE_OPTION) {
+            return;
+        }
+        Path path = chooser.getSelectedFile().toPath();
+        try {
+            List<List<String>> rows = new ArrayList<>();
+            if ("Rate Chart".equals(type)) {
+                rows.add(listOf("MilkType", "FAT Min", "FAT Max", "SNF Min", "SNF Max",
+                        "Rate per Litre", "Effective From", "Effective To", "Active"));
+                rows.add(listOf("Cow", "3", "8", "8.5", "9.0", "48.00", "01-09-2026", "30-09-2026", "Yes"));
+                rows.add(listOf("Buffalo", "4", "10", "8.5", "9.0", "58.00", "01-09-2026", "30-09-2026", "Yes"));
+                rows.add(listOf("Mix", "5", "10", "8.5", "9.0", "60.00", "01-09-2026", "30-09-2026", "No"));
+            } else {
+                rows.add(listOf("Date", "CustomerCode", "MilkType", "Shift", "Quantity", "FAT", "SNF"));
+                rows.add(listOf("01-09-2026", "C001", "Cow", "Morning", "5.0", "3.5", "8.6"));
+                rows.add(listOf("01-09-2026", "C002", "Buffalo", "Evening", "4.0", "6.0", "8.8"));
+            }
+            CSVUtil.write(path, rows);
+            append("Template saved: " + path);
+            UIUtil.showMessage(this, "Template saved to:\n" + path, "Template",
+                    JOptionPane.INFORMATION_MESSAGE);
+            LOG.info("Import template saved: " + path);
+        } catch (Exception ex) {
+            LOG.severe("Template save failed: " + ex.getMessage());
+            UIUtil.showMessage(this, "Could not save template: " + ex.getMessage(),
+                    "Template", JOptionPane.ERROR_MESSAGE);
+        }
     }
 
     private void exportMilk(Path path) throws Exception {

@@ -5,6 +5,7 @@ import dairy.erp.service.DashboardService;
 import dairy.erp.util.CurrencyUtil;
 import dairy.erp.util.DairyNameLabel;
 import dairy.erp.util.DateUtil;
+import dairy.erp.util.Theme;
 import dairy.erp.util.UIUtil;
 
 import javax.swing.BorderFactory;
@@ -55,6 +56,13 @@ public class DashboardPanel extends JPanel {
     private final JLabel buffaloValue = valueLabel(UIUtil.BRAND);
     private final JLabel mixValue = valueLabel(UIUtil.BRAND);
 
+    // Shift cards + their accent strips, so the colours can be re-applied
+    // whenever the application theme changes.
+    private JPanel morningCard;
+    private JPanel eveningCard;
+    private JPanel morningStrip;
+    private JPanel eveningStrip;
+
     // Animated milk-fill vessels for the three milk-type panels.
     private final MilkLevelPanel cowLevelPanel = new MilkLevelPanel();
     private final MilkLevelPanel buffaloLevelPanel = new MilkLevelPanel();
@@ -69,6 +77,10 @@ public class DashboardPanel extends JPanel {
         setBorder(BorderFactory.createEmptyBorder(10, 14, 10, 14));
         // Register once (not in loadDairyName, which runs on every refresh).
         dairy.erp.util.AppBus.onDairyNameChanged(this::applyDairyName);
+        // Theme propagation: metric/shift colours follow the theme selected
+        // in Application Settings — live, no restart needed.
+        dairy.erp.util.AppBus.onThemeChanged(this::applyTheme);
+        applyTheme(dairy.erp.util.Theme.byId(settingsService.get("app.theme")));
         loadDairyName();
         add(buildHeader(), BorderLayout.NORTH);
         add(buildSummary(), BorderLayout.CENTER);
@@ -158,12 +170,63 @@ public class DashboardPanel extends JPanel {
         shiftsCol.add(sectionLabel("Collection Shifts"), BorderLayout.NORTH);
         JPanel shiftRow = new JPanel(new GridLayout(1, 2, 10, 0));
         shiftRow.setOpaque(false);
-        shiftRow.add(smallShiftCard(new SunriseIcon(52), morningValue,
-                "Morning Collection", MORNING_GREEN));
-        shiftRow.add(smallShiftCard("\uD83C\uDF19", eveningValue,
-                "Evening Collection", EVENING_ORANGE));
+        // Both shift cards follow the currently selected theme brand so the
+        // whole section re-colours as soon as the theme changes.
+        Color brand = UIUtil.BRAND;
+        morningCard = smallShiftCard(new SunriseIcon(52), morningValue,
+                "Morning Collection", brand);
+        morningStrip = accentStripOf(morningCard);
+        eveningCard = smallShiftCard("\uD83C\uDF19", eveningValue,
+                "Evening Collection", brand);
+        eveningStrip = accentStripOf(eveningCard);
+        shiftRow.add(morningCard);
+        shiftRow.add(eveningCard);
         shiftsCol.add(shiftRow, BorderLayout.CENTER);
         return shiftsCol;
+    }
+
+    /**
+     * Re-colours every dashboard metric with the selected theme: summary and
+     * milk-type values plus BOTH shift-value labels use the theme brand
+     * colour, and the shift-card accent strips and borders match the same
+     * brand. Using the brand for the Morning card too (instead of a fixed
+     * green) guarantees the shift colours visibly follow every theme choice.
+     */
+    private void applyTheme(Theme theme) {
+        Color brand = theme.getBrand();
+        for (JLabel value : new JLabel[]{customersValue, milkValue, amountValue,
+                morningValue, eveningValue, cowValue, buffaloValue, mixValue}) {
+            value.setForeground(brand);
+        }
+        restyleShiftCard(morningCard, brand);
+        restyleShiftCard(eveningCard, brand);
+        if (morningStrip != null) {
+            morningStrip.setBackground(brand);
+        }
+        if (eveningStrip != null) {
+            eveningStrip.setBackground(brand);
+        }
+        repaint();
+    }
+
+    /** Re-applies a shift card's accent-coloured border after a theme change. */
+    private static void restyleShiftCard(JPanel card, Color accent) {
+        if (card != null) {
+            card.setBorder(BorderFactory.createCompoundBorder(
+                    BorderFactory.createLineBorder(accent, 1, true),
+                    BorderFactory.createEmptyBorder(10, 0, 10, 8)));
+        }
+    }
+
+    /** Returns the accent strip (the WEST child) of a shift card. */
+    private static JPanel accentStripOf(JPanel card) {
+        for (java.awt.Component c : card.getComponents()) {
+            if (c instanceof JPanel
+                    && BorderLayout.WEST.equals(((BorderLayout) card.getLayout()).getConstraints(c))) {
+                return (JPanel) c;
+            }
+        }
+        return null;
     }
 
     /** Compact horizontal shift card: accent strip, small icon, value + caption. */
