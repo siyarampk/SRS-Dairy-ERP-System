@@ -167,14 +167,24 @@ public final class PrintUtil {
             PrintRequestAttributeSet attrs = new HashPrintRequestAttributeSet();
             attrs.add(OrientationRequested.PORTRAIT);
 
+            // KEY FIX — stop the extra paper roll:
+            // Set the ESC/P form (page) length to EXACTLY the slip height
+            // BEFORE spooling the content job. The driver then advances the
+            // roll only to the content instead of a full page. (The old code
+            // sent the short-form command AFTER the content, and it included
+            // ESC @  which resets the printer back to a long default form —
+            // that is why extra blank paper kept rolling out.)
+            setShortForm(ps, pageFormat.getHeight() / 72.0);
+
             // Always spool — if the printer is off, the OS queue holds the
             // job and prints it when the printer comes back online.
             System.out.println("[PrintUtil] Spooling slip content...");
             job.print(attrs);
 
-            // Eject with form length fitted to THIS slip's height so the
-            // LQ-310 tears off right after the content (no full-page roll).
-            forcePaperEject(ps, pageFormat.getHeight() / 72.0);
+            // After the content, a single form feed advances to the tear-off
+            // edge of the SHORT form. No ESC @ here — resetting the printer
+            // would restore the long default form length.
+            formFeed(ps);
 
             return true;
 
@@ -227,7 +237,10 @@ public final class PrintUtil {
         }
         mg.dispose();
 
-        double heightPt = Math.ceil(y + marginYPt + 6.0); // small bottom pad for tear-off
+        // Tight fit: the form length equals the rendered content height plus
+        // a tiny 2pt allowance. The old "+ marginYPt + 6.0" added extra height,
+        // which the driver turned into extra blank paper after the content.
+        double heightPt = Math.ceil(y + 2.0); // snug: content + 2pt tear-off pad
 
         Paper paper = new Paper();
         paper.setSize(widthPt, heightPt);
@@ -302,37 +315,16 @@ public final class PrintUtil {
     }
 
     // ------------------------------------------------------------------
-    // Raw eject (ESC/P) — fitted to the slip height
+    // Raw ESC/P — short-form control (stops the extra paper roll)
     // ------------------------------------------------------------------
 
     /**
-     * Sends raw ESC/P bytes to the printer:
-     *   ESC @            -> initialize
-     *   ESC C n          -> set page (form) length to n lines (1/6 inch each)
-     *   FF (0x0C)        -> form feed to the end of THAT short form
-     * Because the form length is set to the slip height first, FF feeds only
-     * the few remaining lines to the tear-off edge instead of rolling a full
-     * A4/letter page.
+     * Sends raw bytes to the printer as its own print job.
      */
-    private static void forcePaperEject(PrintService ps, double slipHeightInches) {
+    private static void sendRaw(PrintService ps, byte[] command) {
         try {
-            // 6 lines per inch (default line spacing after ESC @).
-            int lines = (int) Math.rint(slipHeightInches * 6.0);
-            if (lines < 1) {
-                lines = 1;
-            }
-            if (lines > 127) {
-                lines = 127; // ESC C n accepts 1..127
-            }
-
-            byte[] ejectCommand = {
-                    0x1B, 0x40,          // ESC @  initialize printer
-                    0x1B, 0x43, (byte) lines, // ESC C n  set form length in lines
-                    0x0C                 // FF  form feed (to end of short form)
-            };
-
             java.io.ByteArrayInputStream byteStream =
-                    new java.io.ByteArrayInputStream(ejectCommand);
+                    new java.io.ByteArrayInputStream(command);
 
             javax.print.Doc rawDoc = new javax.print.SimpleDoc(
                     byteStream,
@@ -341,14 +333,41 @@ public final class PrintUtil {
 
             javax.print.DocPrintJob rawJob = ps.createPrintJob();
             rawJob.print(rawDoc, (PrintRequestAttributeSet) null);
-
-            System.out.println("[PrintUtil] Eject sent (form length " + lines
-                    + " lines ≈ " + String.format(Locale.US, "%.2f", lines / 6.0)
-                    + " in) - paper stopping at tear-off");
-
         } catch (Exception e) {
-            System.err.println("[PrintUtil] Eject failed: " + e.getMessage());
+            System.err.println("[PrintUtil] Raw ESC/P send failed: " + e.getMessage());
         }
+    }
+
+    /**
+     * Sets the ESC/P form (page) length with ESC C n — n in 1/6-inch lines —
+     * so the paper advances only to the slip height and no extra blank roll
+     * is left after the content. Applied BEFORE the content job, so the
+     * driver already knows the short page length while rendering. Note that
+     * ESC @ (initialize) must NOT be sent here/after: it resets the printer
+     * back to a long default form and undoes this command — that was the
+     * original cause of the extra rolling.
+     */
+    private static void setShortForm(PrintService ps, double heightInches) {
+        // 6 lines per inch (default line spacing after ESC @).
+        int lines = (int) Math.rint(heightInches * 6.0);
+        if (lines < 1) {
+            lines = 1;
+        }
+        if (lines > 127) {
+            lines = 127; // ESC C n accepts 1..127
+        }
+        sendRaw(ps, new byte[] { 0x1B, 0x43, (byte) lines });
+        System.out.println("[PrintUtil] Short form set: " + lines
+                + " lines ≈ " + String.format(Locale.US, "%.2f", lines / 6.0) + " in");
+    }
+
+    /**
+     * Single form feed (FF) — advances the paper to the tear-off edge of the
+     * current (short) form, stopping right after the slip content.
+     */
+    private static void formFeed(PrintService ps) {
+        sendRaw(ps, new byte[] { 0x0C });
+        System.out.println("[PrintUtil] Form feed sent — slip stops at tear-off.");
     }
 
     // ------------------------------------------------------------------
