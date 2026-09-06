@@ -1667,7 +1667,7 @@ public class MilkCollectionPanel extends JPanel {
                 slipField("Name", nullToEmpty(m.getCustomerName()).toUpperCase(), SLIP_WIDTH), bodyFont));
         lines.add(new PrintUtil.StyledLine(slipField("Date", formattedDate, SLIP_WIDTH), bodyFont));
         lines.add(new PrintUtil.StyledLine(slipField("Shift", timeWithShift, SLIP_WIDTH), bodyFont));
-        lines.add(new PrintUtil.StyledLine(slipField("Code",nullToEmpty(m.getCustomerCode()).toUpperCase() + " " + milkAbbrev("Buffalo"), SLIP_WIDTH),bodyFont));
+        lines.add(new PrintUtil.StyledLine(slipField("Code",nullToEmpty(m.getCustomerCode()).toUpperCase() + "   " + milkAbbrev("Buffalo"), SLIP_WIDTH),bodyFont));
         lines.add(new PrintUtil.StyledLine(slipField("Liter", CurrencyUtil.format(m.getQuantity()), SLIP_WIDTH),
                 bodyFont));
         lines.add(new PrintUtil.StyledLine(slipField("Fat", trimZeros(m.getFat()) + " %", SLIP_WIDTH), bodyFont));

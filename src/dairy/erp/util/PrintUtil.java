@@ -42,6 +42,7 @@ public final class PrintUtil {
     }
 
     private static final float LEFT_MARGIN = 12f;
+    private static final double BOTTOM_SLACK_IN = 0.60; // blank roll below the last line
 
     // ------------------------------------------------------------------
     // Dialog-based printing (reports etc.)
@@ -176,16 +177,8 @@ public final class PrintUtil {
             // that is why extra blank paper kept rolling out.)
             setShortForm(ps, pageFormat.getHeight() / 72.0);
 
-            // Always spool — if the printer is off, the OS queue holds the
-            // job and prints it when the printer comes back online.
-            System.out.println("[PrintUtil] Spooling slip content...");
+             System.out.println("[PrintUtil] Spooling slip content...");
             job.print(attrs);
-
-            // After the content, a single form feed advances to the tear-off
-            // edge of the SHORT form. No ESC @ here — resetting the printer
-            // would restore the long default form length.
-            formFeed(ps);
-
             return true;
 
         } catch (Exception e) {
@@ -222,41 +215,45 @@ public final class PrintUtil {
             double widthInches, double marginXPt, double marginYPt) {
         double widthPt = widthInches * 72.0;
 
-        // Measure the rendered height of every line.
-        java.awt.image.BufferedImage scratch =
-                new java.awt.image.BufferedImage(1, 1, java.awt.image.BufferedImage.TYPE_INT_RGB);
-        Graphics2D mg = scratch.createGraphics();
-        float y = 8f; // same top padding as TextDocument.print()
-        if (lines != null) {
-            for (StyledLine line : lines) {
-                Font f = line.getFont();
-                mg.setFont(f);
-                FontMetrics fm = mg.getFontMetrics(f);
-                y += fm.getHeight() * 0.85f; // matches renderer line spacing
-            }
-        }
-        mg.dispose();
+        // Rendered height of every line (same 0.85 line compaction as the renderer).
+        double contentPt = measureContentHeightPt(lines);
 
-        // Tight fit: the form length equals the rendered content height plus
-        // a tiny 2pt allowance. The old "+ marginYPt + 6.0" added extra height,
-        // which the driver turned into extra blank paper after the content.
-        double heightPt = Math.ceil(y + 2.0); // snug: content + 2pt tear-off pad
+        // Total paper = top margin + content + real bottom slack + bottom margin.
+        // The slack keeps the last line ("Thank You") above the tear bar.
+        double bottomSlackIn = 2.0;
+        double paperH = marginYPt + contentPt + (bottomSlackIn * 72.0) + marginYPt;
+        paperH = Math.max(paperH, 24.0);
+        paperH = Math.ceil(paperH / 12.0) * 12.0;
+        
+        double imageableH = Math.max(paperH - (marginYPt * 2.0), contentPt + 2.0);
 
+      
         Paper paper = new Paper();
-        paper.setSize(widthPt, heightPt);
+        paper.setSize(widthPt, paperH);
         paper.setImageableArea(marginXPt, marginYPt,
                 widthPt - (marginXPt * 2.0),
-                heightPt - (marginYPt * 2.0));
+                imageableH);
 
         PageFormat pf = new PageFormat();
         pf.setPaper(paper);
         pf.setOrientation(PageFormat.PORTRAIT);
-
-        System.out.println("[PrintUtil] Slip page fitted: "
-                + String.format(Locale.US, "%.2f", widthPt) + " x "
-                + String.format(Locale.US, "%.2f", heightPt) + " pt ("
-                + String.format(Locale.US, "%.2f", heightPt / 72.0) + " in tall)");
         return pf;
+    }
+
+    private static double measureContentHeightPt(Collection<StyledLine> lines) {
+        java.awt.image.BufferedImage scratch = new java.awt.image.BufferedImage(1, 1,
+                java.awt.image.BufferedImage.TYPE_INT_RGB);
+        Graphics2D mg = scratch.createGraphics();
+        double y = 8f; // same top padding as TextDocument.print()
+        if (lines != null) {
+            for (StyledLine line : lines) {
+                Font f = line.getFont();
+                mg.setFont(f);
+                y += mg.getFontMetrics(f).getHeight() * 0.85f;
+            }
+        }
+        mg.dispose();
+        return y;
     }
 
     // ------------------------------------------------------------------
