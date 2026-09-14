@@ -15,12 +15,15 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Locale;
+import java.util.concurrent.*;
 import javax.print.PrintService;
 import javax.print.PrintServiceLookup;
 import javax.print.attribute.HashPrintRequestAttributeSet;
 import javax.print.attribute.PrintRequestAttributeSet;
 import javax.print.attribute.standard.OrientationRequested;
+import javax.print.attribute.standard.PrinterIsAcceptingJobs;
 import javax.swing.JOptionPane;
+import javax.swing.SwingUtilities;
 
 
 /**
@@ -28,24 +31,19 @@ import javax.swing.JOptionPane;
  *
  * IMPORTANT:
  *  - Never falls back to "Save as PDF / Save to file".
- *  - Always targets a REAL physical printer (virtual printers like
- *    "Microsoft Print to PDF" are skipped — they are what caused the
- *    "Save print output as" dialog).
- *  - For slip/roll printers the page height is fitted exactly to the
- *    content, and the raw eject sets the form length (ESC C n) BEFORE
- *    the Form Feed so the LQ-310 stops/tears off right after the slip
- *    instead of rolling a full blank page.
+ *  - Always targets a REAL physical printer
+ *  - FIXED: Non-blocking direct print with timeout so UI never hangs
  */
 public final class PrintUtil {
 
-    private PrintUtil() {
-    }
+    private PrintUtil() {}
 
     private static final float LEFT_MARGIN = 12f;
-    private static final double BOTTOM_SLACK_IN = 0.60; // blank roll below the last line
+    private static final double BOTTOM_SLACK_IN = 0.60;
+    private static final int DIRECT_PRINT_TIMEOUT_SEC = 7; // max wait before giving up
 
     // ------------------------------------------------------------------
-    // Dialog-based printing (reports etc.)
+    // Dialog-based printing (reports etc.) - UNCHANGED
     // ------------------------------------------------------------------
 
     public static boolean printText(java.awt.Frame owner, String title, List<String> lines,
@@ -133,73 +131,135 @@ public final class PrintUtil {
     }
 
     // ------------------------------------------------------------------
-    // Direct (no-dialog) slip printing
+    // Direct (no-dialog) slip printing - FIXED VERSION
     // ------------------------------------------------------------------
 
     /**
-     * Prints directly to the physical printer with the caller's PageFormat.
-     * The pageFormat height SHOULD be fitted to the content (see
-     * {@link #createSlipPageFormat}) so the roll stops after the slip.
+     * FIXED: Prints directly WITHOUT hanging the UI.
+     * - If no physical printer -> shows dialog "Printer not found" and returns false IMMEDIATELY
+     * - If printer found but offline/not responding -> times out after 7 sec, shows dialog, returns false
+     * - Record saving should NOT depend on return value of this method
      */
     public static boolean printTextDirect(java.awt.Frame owner, String title,
             Collection<StyledLine> styledLines, PageFormat pageFormat) {
 
         System.out.println("[PrintUtil] Initializing direct print...");
 
-        // FIX: never accept a virtual printer ("Microsoft Print to PDF",
-        // XPS, OneNote, Fax...) — those pop a "Save print output as" dialog.
         PrintService ps = resolvePhysicalPrinter();
         if (ps == null) {
-            UIUtil.showMessage(owner,
-                    "No physical printer was found on this computer.\n\n"
-                  + "Please install/connect a printer (and set it as default), then try again.",
-                    "Print", JOptionPane.ERROR_MESSAGE);
+            System.out.println("[PrintUtil] No physical printer found -> showing dialog");
+            // Ensure dialog is shown on EDT
+            Runnable showMsg = () -> UIUtil.showMessage(owner,
+                    "Printer not found.\n\nPlease check printer is connected, powered ON and has paper.\nRecord saved successfully.",
+                    "Print", JOptionPane.WARNING_MESSAGE);
+            if (SwingUtilities.isEventDispatchThread()) {
+                showMsg.run();
+            } else {
+                SwingUtilities.invokeLater(showMsg);
+            }
             return false;
         }
+
+        // Optional: quick check if printer says it is not accepting jobs
+        try {
+            PrinterIsAcceptingJobs accepting = ps.getAttribute(PrinterIsAcceptingJobs.class);
+            if (accepting == PrinterIsAcceptingJobs.NOT_ACCEPTING_JOBS) {
+                System.out.println("[PrintUtil] Printer reports NOT_ACCEPTING_JOBS: " + ps.getName());
+                // still try, but will timeout quickly if really offline
+            }
+        } catch (Exception ignore) {}
+
         System.out.println("[PrintUtil] Sending job to physical printer: " + ps.getName());
 
-        TextDocument doc = new TextDocument(styledLines);
+        // ---- FIX: Run actual blocking print in background thread with TIMEOUT ----
+        // This prevents the EDT (UI thread) from hanging forever when USB is unplugged.
+        ExecutorService exec = Executors.newSingleThreadExecutor(r -> {
+            Thread t = new Thread(r, "PrintUtil-DirectPrint");
+            t.setDaemon(true);
+            return t;
+        });
+
+        // Make copies for thread safety
+        final PrintService finalPs = ps;
+        final Collection<StyledLine> copyLines = new ArrayList<>(styledLines);
+        final PageFormat copyPf = pageFormat;
+        final String copyTitle = title;
+
+        Future<Boolean> future = exec.submit(() -> {
+            try {
+                return doDirectPrint(finalPs, copyTitle, copyLines, copyPf);
+            } catch (Exception ex) {
+                ex.printStackTrace();
+                // Show error on EDT
+                SwingUtilities.invokeLater(() -> UIUtil.showMessage(owner,
+                        "Could not print to printer '" + finalPs.getName() + "'.\n\n"
+                      + "Error: " + ex.getMessage() + "\n\n"
+                      + "Check that the printer is powered on, connected and has paper.\nRecord saved successfully.",
+                        "Print", JOptionPane.ERROR_MESSAGE));
+                return false;
+            }
+        });
+
         try {
-            PrinterJob job = PrinterJob.getPrinterJob();
-            job.setPrintService(ps);
-            job.setJobName(title);
-            job.setPrintable(doc, pageFormat);
-
-            PrintRequestAttributeSet attrs = new HashPrintRequestAttributeSet();
-            attrs.add(OrientationRequested.PORTRAIT);
-
-            // KEY FIX — stop the extra paper roll:
-            // Set the ESC/P form (page) length to EXACTLY the slip height
-            // BEFORE spooling the content job. The driver then advances the
-            // roll only to the content instead of a full page. (The old code
-            // sent the short-form command AFTER the content, and it included
-            // ESC @  which resets the printer back to a long default form —
-            // that is why extra blank paper kept rolling out.)
-            setShortForm(ps, pageFormat.getHeight() / 72.0);
-
-             System.out.println("[PrintUtil] Spooling slip content...");
-            job.print(attrs);
-            return true;
-
-        } catch (Exception e) {
-            // FIX: report the error — NEVER prompt to save a file.
-            e.printStackTrace();
-            UIUtil.showMessage(owner,
-                    "Could not print to printer '" + ps.getName() + "'.\n\n"
-                  + "Error: " + e.getMessage() + "\n\n"
-                  + "Check that the printer is powered on, connected and has paper, "
-                  + "then try again.",
-                    "Print", JOptionPane.ERROR_MESSAGE);
+            // Wait max 7 seconds. If printer is disconnected, job.print() will hang,
+            // but we will timeout and free the UI / allow record to save.
+            Boolean result = future.get(DIRECT_PRINT_TIMEOUT_SEC, TimeUnit.SECONDS);
+            exec.shutdownNow();
+            return Boolean.TRUE.equals(result);
+        } catch (TimeoutException te) {
+            System.err.println("[PrintUtil] TIMEOUT after " + DIRECT_PRINT_TIMEOUT_SEC + "s - printer not responding, cancelling. Record will still save.");
+            future.cancel(true);
+            exec.shutdownNow();
+            // Must show dialog on EDT
+            SwingUtilities.invokeLater(() -> UIUtil.showMessage(owner,
+                    "Printer not found or not responding.\n\n"
+                  + "Printer '" + finalPs.getName() + "' is not responding.\n"
+                  + "Please check USB / power / paper.\n\n"
+                  + "Record saved successfully.",
+                    "Print", JOptionPane.WARNING_MESSAGE));
+            return false;
+        } catch (ExecutionException ee) {
+            exec.shutdownNow();
+            Throwable cause = ee.getCause();
+            cause.printStackTrace();
+            SwingUtilities.invokeLater(() -> UIUtil.showMessage(owner,
+                    "Printing failed: " + cause.getMessage() + "\n\nRecord saved successfully.",
+                    "Print", JOptionPane.ERROR_MESSAGE));
+            return false;
+        } catch (InterruptedException ie) {
+            exec.shutdownNow();
+            Thread.currentThread().interrupt();
             return false;
         }
     }
 
     /**
+     * Actual blocking print logic - called from background thread
+     */
+    private static boolean doDirectPrint(PrintService ps, String title,
+            Collection<StyledLine> styledLines, PageFormat pageFormat) throws Exception {
+
+        TextDocument doc = new TextDocument(styledLines);
+        PrinterJob job = PrinterJob.getPrinterJob();
+        job.setPrintService(ps);
+        job.setJobName(title);
+        job.setPrintable(doc, pageFormat);
+
+        PrintRequestAttributeSet attrs = new HashPrintRequestAttributeSet();
+        attrs.add(OrientationRequested.PORTRAIT);
+
+        // Set short form with its own timeout (also blocks if offline)
+        setShortFormWithTimeout(ps, pageFormat.getHeight() / 72.0);
+
+        System.out.println("[PrintUtil] Spooling slip content...");
+        job.print(attrs);
+        System.out.println("[PrintUtil] Slip spooled successfully to " + ps.getName());
+        return true;
+    }
+
+    /**
      * Convenience method for roll slips: builds a PageFormat whose HEIGHT is
-     * fitted exactly to the supplied lines (no fixed 5"/8" page), then prints
-     * directly.
-     *
-     * @param widthInches roll width, e.g. 2.5 for a 2.5 inch / 64 mm roll
+     * fitted exactly to the supplied lines, then prints directly.
      */
     public static boolean printSlipDirect(java.awt.Frame owner, String title,
             Collection<StyledLine> lines, double widthInches) {
@@ -214,26 +274,17 @@ public final class PrintUtil {
     public static PageFormat createSlipPageFormat(Collection<StyledLine> lines,
             double widthInches, double marginXPt, double marginYPt) {
         double widthPt = widthInches * 72.0;
-
-        // Rendered height of every line (same 0.85 line compaction as the renderer).
         double contentPt = measureContentHeightPt(lines);
-
-        // Total paper = top margin + content + real bottom slack + bottom margin.
-        // The slack keeps the last line ("Thank You") above the tear bar.
         double bottomSlackIn = 2.0;
         double paperH = marginYPt + contentPt + (bottomSlackIn * 72.0) + marginYPt;
         paperH = Math.max(paperH, 24.0);
         paperH = Math.ceil(paperH / 12.0) * 12.0;
-        
         double imageableH = Math.max(paperH - (marginYPt * 2.0), contentPt + 2.0);
-
-      
         Paper paper = new Paper();
         paper.setSize(widthPt, paperH);
         paper.setImageableArea(marginXPt, marginYPt,
                 widthPt - (marginXPt * 2.0),
                 imageableH);
-
         PageFormat pf = new PageFormat();
         pf.setPaper(paper);
         pf.setOrientation(PageFormat.PORTRAIT);
@@ -244,7 +295,7 @@ public final class PrintUtil {
         java.awt.image.BufferedImage scratch = new java.awt.image.BufferedImage(1, 1,
                 java.awt.image.BufferedImage.TYPE_INT_RGB);
         Graphics2D mg = scratch.createGraphics();
-        double y = 8f; // same top padding as TextDocument.print()
+        double y = 8f;
         if (lines != null) {
             for (StyledLine line : lines) {
                 Font f = line.getFont();
@@ -257,7 +308,7 @@ public final class PrintUtil {
     }
 
     // ------------------------------------------------------------------
-    // Printer selection
+    // Printer selection - UNCHANGED
     // ------------------------------------------------------------------
 
     private static PrintService resolvePhysicalPrinter() {
@@ -312,104 +363,94 @@ public final class PrintUtil {
     }
 
     // ------------------------------------------------------------------
-    // Raw ESC/P — short-form control (stops the extra paper roll)
+    // Raw ESC/P — short-form control - FIXED WITH TIMEOUT
     // ------------------------------------------------------------------
 
-    /**
-     * Sends raw bytes to the printer as its own print job.
-     */
     private static void sendRaw(PrintService ps, byte[] command) {
         try {
             java.io.ByteArrayInputStream byteStream =
                     new java.io.ByteArrayInputStream(command);
-
             javax.print.Doc rawDoc = new javax.print.SimpleDoc(
                     byteStream,
                     javax.print.DocFlavor.INPUT_STREAM.AUTOSENSE,
                     null);
-
             javax.print.DocPrintJob rawJob = ps.createPrintJob();
+            // This is the call that blocks when printer is offline
             rawJob.print(rawDoc, (PrintRequestAttributeSet) null);
         } catch (Exception e) {
             System.err.println("[PrintUtil] Raw ESC/P send failed: " + e.getMessage());
+            throw new RuntimeException(e);
         }
     }
 
     /**
-     * Sets the ESC/P form (page) length with ESC C n — n in 1/6-inch lines —
-     * so the paper advances only to the slip height and no extra blank roll
-     * is left after the content. Applied BEFORE the content job, so the
-     * driver already knows the short page length while rendering. Note that
-     * ESC @ (initialize) must NOT be sent here/after: it resets the printer
-     * back to a long default form and undoes this command — that was the
-     * original cause of the extra rolling.
+     * FIXED: Wraps sendRaw in a 3-second timeout so disconnected USB doesn't hang forever
      */
-    private static void setShortForm(PrintService ps, double heightInches) {
-        // 6 lines per inch (default line spacing after ESC @).
+    private static void setShortFormWithTimeout(PrintService ps, double heightInches) {
         int lines = (int) Math.rint(heightInches * 6.0);
-        if (lines < 1) {
-            lines = 1;
+        if (lines < 1) lines = 1;
+        if (lines > 127) lines = 127;
+        final byte[] cmd = new byte[] { 0x1B, 0x43, (byte) lines };
+
+        ExecutorService ex = Executors.newSingleThreadExecutor(r -> {
+            Thread t = new Thread(r, "PrintUtil-SetShortForm");
+            t.setDaemon(true);
+            return t;
+        });
+        Future<?> f = ex.submit(() -> sendRaw(ps, cmd));
+        try {
+            f.get(3, TimeUnit.SECONDS);
+            System.out.println("[PrintUtil] Short form set: " + lines
+                    + " lines ≈ " + String.format(Locale.US, "%.2f", lines / 6.0) + " in");
+        } catch (TimeoutException te) {
+            f.cancel(true);
+            System.err.println("[PrintUtil] setShortForm timed out - printer not responding, ignoring");
+            throw new RuntimeException("Printer not responding while setting form length");
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        } finally {
+            ex.shutdownNow();
         }
-        if (lines > 127) {
-            lines = 127; // ESC C n accepts 1..127
-        }
-        sendRaw(ps, new byte[] { 0x1B, 0x43, (byte) lines });
-        System.out.println("[PrintUtil] Short form set: " + lines
-                + " lines ≈ " + String.format(Locale.US, "%.2f", lines / 6.0) + " in");
     }
 
-    /**
-     * Single form feed (FF) — advances the paper to the tear-off edge of the
-     * current (short) form, stopping right after the slip content.
-     */
+    private static void setShortForm(PrintService ps, double heightInches) {
+        setShortFormWithTimeout(ps, heightInches);
+    }
+
     private static void formFeed(PrintService ps) {
         sendRaw(ps, new byte[] { 0x0C });
         System.out.println("[PrintUtil] Form feed sent — slip stops at tear-off.");
     }
 
     // ------------------------------------------------------------------
-    // Styled line + printable document
+    // Styled line + printable document - UNCHANGED
     // ------------------------------------------------------------------
 
     public static final class StyledLine {
         public static final int ALIGN_LEFT = 0;
         public static final int ALIGN_CENTER = 1;
-
         private final String text;
         private final Font font;
         private final int alignment;
-
         public StyledLine(String text, Font font) {
             this(text, font, ALIGN_LEFT);
         }
-
         public StyledLine(String text, Font font, int alignment) {
             this.text = text == null ? "" : text;
             this.font = font != null ? font : new Font(Font.MONOSPACED, Font.PLAIN, 9);
             this.alignment = alignment;
         }
-
-        public String getText() {
-            return text;
-        }
-
-        public Font getFont() {
-            return font;
-        }
-
-        public int getAlignment() {
-            return alignment;
-        }
+        public String getText() { return text; }
+        public Font getFont() { return font; }
+        public int getAlignment() { return alignment; }
     }
 
     private static final class TextDocument implements Printable {
         private final List<StyledLine> styledLines;
         private final float leftMargin;
-
         TextDocument(List<String> lines) {
             this(lines, new Font(Font.MONOSPACED, Font.PLAIN, 9), 30f);
         }
-
         TextDocument(List<String> lines, Font font, float leftMargin) {
             this.styledLines = new ArrayList<>();
             if (lines != null) {
@@ -419,60 +460,41 @@ public final class PrintUtil {
             }
             this.leftMargin = leftMargin;
         }
-
         TextDocument(Collection<StyledLine> styledLines) {
             this.styledLines = new ArrayList<>(styledLines);
             this.leftMargin = LEFT_MARGIN;
         }
-
         PageFormat pageFormat() {
             return PrinterJob.getPrinterJob().defaultPage();
         }
-
         @Override
         public int print(Graphics g, PageFormat pf, int pageIndex) throws PrinterException {
-            if (pageIndex > 0) {
-                return NO_SUCH_PAGE;
-            }
-
+            if (pageIndex > 0) return NO_SUCH_PAGE;
             Graphics2D g2 = (Graphics2D) g;
-            g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING,
-                    RenderingHints.VALUE_TEXT_ANTIALIAS_OFF);
-            g2.setRenderingHint(RenderingHints.KEY_FRACTIONALMETRICS,
-                    RenderingHints.VALUE_FRACTIONALMETRICS_OFF);
-
+            g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_OFF);
+            g2.setRenderingHint(RenderingHints.KEY_FRACTIONALMETRICS, RenderingHints.VALUE_FRACTIONALMETRICS_OFF);
             g2.translate(pf.getImageableX(), pf.getImageableY());
             g2.setColor(Color.BLACK);
-
             float y = 8f;
             float maxX = (float) pf.getImageableWidth();
             float startX = leftMargin;
-
             for (int i = 0; i < styledLines.size(); i++) {
                 StyledLine line = styledLines.get(i);
                 Font font = line.getFont();
                 g2.setFont(font);
                 FontMetrics fm = g2.getFontMetrics(font);
-
                 String text = line.getText();
                 float textW = fm.stringWidth(text);
-
                 float drawX;
                 if (line.getAlignment() == StyledLine.ALIGN_CENTER) {
                     drawX = (maxX - textW) / 2f;
-                    if (drawX < 0) {
-                        drawX = 0;
-                    }
+                    if (drawX < 0) drawX = 0;
                 } else {
                     drawX = startX;
                 }
-
                 g2.drawString(text, drawX, y + fm.getAscent());
                 y += fm.getHeight() * 0.85f;
-
-                if (y > pf.getImageableHeight()) {
-                    break;
-                }
+                if (y > pf.getImageableHeight()) break;
             }
             return PAGE_EXISTS;
         }
